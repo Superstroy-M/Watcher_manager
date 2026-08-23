@@ -1,0 +1,7 @@
+pywin32==306
+psutil==6.0.0
+requests==2.32.3
+pystray==0.19.5
+Pillow==10.4.0
+mss==9.0.2
+wmi==1.5.1

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WatcherManager — Мониторинг ПК</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  .online-dot { width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block; animation: pulse 2s infinite; }
+  .offline-dot { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .hover-card:hover { border-color: #6366f1; transform: translateY(-2px); transition: all .2s; }
+</style>
+</head>
+<body class="min-h-screen p-6">
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-3xl font-bold text-white">SyncLayer</h1>
+      <p class="text-slate-400 mt-1">Мониторинг рабочих станций</p>
+    </div>
+    <div class="flex gap-3 items-center">
+      <a href="/live" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+        <span class="dot-online"></span> Live
+      </a>
+      <a href="/gallery" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
+        📷 Скриншоты
+      </a>
+      <div class="card px-5 py-3 text-center">
+        <div class="text-2xl font-bold text-green-400">{{ online_count }}</div>
+        <div class="text-xs text-slate-400 mt-1">Онлайн</div>
+      </div>
+      <div class="card px-5 py-3 text-center">
+        <div class="text-2xl font-bold text-slate-300">{{ total_count }}</div>
+        <div class="text-xs text-slate-400 mt-1">Всего ПК</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="mb-6">
+    <input
+      id="search"
+      type="text"
+      placeholder="Поиск по имени ПК или пользователю..."
+      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+      oninput="filterComputers(this.value)"
+    />
+  </div>
+
+  <!-- Computers grid -->
+  <div id="computers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    {% for computer in computers %}
+    <a href="/computer/{{ computer.id }}" class="card hover-card p-5 block no-underline cursor-pointer" data-name="{{ computer.hostname|lower }} {{ (computer.username or '')|lower }}">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          {% if computer.is_online %}
+            <span class="online-dot"></span>
+            <span class="text-xs text-green-400 font-medium">ОНЛАЙН</span>
+          {% else %}
+            <span class="offline-dot"></span>
+            <span class="text-xs text-slate-500 font-medium">ОФЛАЙН</span>
+          {% endif %}
+        </div>
+        <span class="text-xs text-slate-500">v{{ computer.agent_version or '—' }}</span>
+      </div>
+
+      <div class="mb-1">
+        <div class="text-lg font-semibold text-white truncate">{{ computer.hostname }}</div>
+        <div class="text-sm text-slate-400 truncate">{{ computer.username or 'Пользователь неизвестен' }}</div>
+      </div>
+
+      <div class="mt-3 pt-3 border-t border-slate-700 text-xs text-slate-500">
+        <div>IP: {{ computer.ip_address or '—' }}</div>
+        <div class="mt-1">
+          Последний раз:
+          {% if computer.last_seen %}
+            <span class="text-slate-400">{{ computer.last_seen.strftime('%d.%m.%Y %H:%M') }}</span>
+          {% else %}
+            <span>—</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+    {% else %}
+    <div class="col-span-full text-center py-20 text-slate-500">
+      <div class="text-5xl mb-4">🖥️</div>
+      <div class="text-lg">Нет зарегистрированных ПК</div>
+      <div class="text-sm mt-2">Установите агент на рабочие станции</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+function filterComputers(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('[data-name]').forEach(el => {
+    el.style.display = el.dataset.name.includes(q) ? '' : 'none';
+  });
+}
+
+// Auto-refresh online status every 30s
+setInterval(() => {
+  fetch('/api/computers')
+    .then(r => r.json())
+    .then(data => {
+      data.forEach(c => {
+        const card = document.querySelector(`a[href="/computer/${c.id}"]`);
+        if (!card) return;
+        const dot = card.querySelector('.online-dot, .offline-dot');
+        const label = dot?.nextElementSibling;
+        if (c.is_online) {
+          dot?.classList.replace('offline-dot', 'online-dot');
+          if (label) { label.textContent = 'ОНЛАЙН'; label.className = 'text-xs text-green-400 font-medium'; }
+        } else {
+          dot?.classList.replace('online-dot', 'offline-dot');
+          if (label) { label.textContent = 'ОФЛАЙН'; label.className = 'text-xs text-slate-500 font-medium'; }
+        }
+      });
+    });
+}, 30000);
+</script>
+</body>
+</html>

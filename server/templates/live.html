@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live — SyncLayer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0a0f1e; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; transition: border-color .2s; }
+  .card.online { border-color: #22c55e33; }
+  .card.offline { opacity: .55; }
+  .dot-online { width:9px;height:9px;border-radius:50%;background:#22c55e;display:inline-block;animation:pulse 2s infinite; }
+  .dot-offline { width:9px;height:9px;border-radius:50%;background:#475569;display:inline-block; }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  .prod-bar { height:6px; border-radius:3px; overflow:hidden; display:flex; gap:1px; }
+  .prod-green { background:#22c55e; }
+  .prod-gray { background:#475569; }
+  .prod-red { background:#ef4444; }
+
+  .app-badge {
+    display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600;
+  }
+  .badge-productive { background:#15803d22; color:#4ade80; border:1px solid #15803d44; }
+  .badge-neutral    { background:#1e40af22; color:#93c5fd; border:1px solid #1e40af44; }
+  .badge-distracting{ background:#7f1d1d22; color:#fca5a5; border:1px solid #7f1d1d44; }
+
+  /* Лайтбокс скриншота */
+  #lb { display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:9999; align-items:center; justify-content:center; }
+  #lb.open { display:flex; }
+  #lb img { max-width:90vw; max-height:88vh; border-radius:8px; }
+  #lb-close { position:fixed;top:16px;right:24px;font-size:30px;color:#fff;cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="lb"><span id="lb-close" onclick="document.getElementById('lb').classList.remove('open')">✕</span><img id="lb-img" src=""></div>
+
+<div class="max-w-screen-2xl mx-auto p-5">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-4">
+      <a href="/" class="text-slate-400 hover:text-white text-sm">← Все ПК</a>
+      <h1 class="text-2xl font-bold text-white">Live мониторинг</h1>
+      <span id="online-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900/40 text-green-400 border border-green-800">0 онлайн</span>
+    </div>
+    <div class="flex items-center gap-3 text-slate-400 text-sm">
+      <span id="last-update">обновляется...</span>
+      <button onclick="loadData()" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg text-white text-xs">↻ Обновить</button>
+    </div>
+  </div>
+
+  <!-- Grid -->
+  <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+    <!-- Заполняется JS -->
+    {% for computer in computers %}
+    <div class="card {{ 'online' if computer.is_online else 'offline' }}" id="pc-{{ computer.id }}">
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="{{ 'dot-online' if computer.is_online else 'dot-offline' }}"></span>
+            <span class="font-semibold text-white text-sm truncate max-w-[120px]" title="{{ computer.hostname }}">{{ computer.hostname }}</span>
+          </div>
+          <a href="/computer/{{ computer.id }}" class="text-xs text-indigo-400 hover:text-indigo-300">История →</a>
+        </div>
+        <div class="text-xs text-slate-500 mb-3">{{ computer.username or '—' }} · {{ computer.ip_address or '—' }}</div>
+
+        <div class="current-app text-xs mb-3 min-h-[36px]">
+          <div class="text-slate-500">Загрузка...</div>
+        </div>
+
+        <div class="screenshot-wrap relative cursor-zoom-in rounded-lg overflow-hidden bg-slate-900 aspect-video flex items-center justify-center" onclick="openScreenshot(this)">
+          <img class="screenshot-img w-full h-full object-cover hidden" src="" alt="" loading="lazy">
+          <span class="no-shot text-slate-600 text-xs">нет скриншота</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+const PROD_COLORS = {
+  productive: 'badge-productive',
+  neutral: 'badge-neutral',
+  distracting: 'badge-distracting',
+};
+
+function openScreenshot(wrap) {
+  const img = wrap.querySelector('.screenshot-img');
+  if (!img || img.classList.contains('hidden')) return;
+  document.getElementById('lb-img').src = img.src;
+  document.getElementById('lb').classList.add('open');
+}
+
+async function loadData() {
+  try {
+    const data = await fetch('/api/live').then(r => r.json());
+    let online = 0;
+
+    data.forEach(pc => {
+      if (pc.is_online) online++;
+      const card = document.getElementById('pc-' + pc.id);
+      if (!card) return;
+
+      // Статус
+      card.className = `card ${pc.is_online ? 'online' : 'offline'}`;
+      const dot = card.querySelector('span:first-child');
+      if (dot) dot.className = pc.is_online ? 'dot-online' : 'dot-offline';
+
+      // Текущее приложение
+      const appDiv = card.querySelector('.current-app');
+      if (appDiv) {
+        if (!pc.current_app || pc.current_type === 'idle') {
+          appDiv.innerHTML = '<div class="text-slate-500 italic">простой</div>';
+        } else {
+          const cls = PROD_COLORS[pc.productivity || 'neutral'] || 'badge-neutral';
+          appDiv.innerHTML = `
+            <span class="app-badge ${cls}">${pc.current_app || '—'}</span>
+            <div class="text-slate-400 mt-1 truncate" title="${pc.current_title || ''}">${(pc.current_title || '').slice(0, 55)}${pc.current_title && pc.current_title.length > 55 ? '…' : ''}</div>
+          `;
+        }
+      }
+
+      // Скриншот
+      const wrap = card.querySelector('.screenshot-wrap');
+      const img = card.querySelector('.screenshot-img');
+      const noShot = card.querySelector('.no-shot');
+      if (img && pc.last_screenshot) {
+        img.src = pc.last_screenshot + '&t=' + Date.now();
+        img.classList.remove('hidden');
+        if (noShot) noShot.style.display = 'none';
+      }
+    });
+
+    document.getElementById('online-badge').textContent = `${online} онлайн`;
+    document.getElementById('last-update').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru');
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+// Автообновление каждые 30 секунд
+loadData();
+setInterval(loadData, 30000);
+</script>
+</body>
+</html>

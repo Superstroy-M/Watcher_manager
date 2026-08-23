@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Скриншоты — {{ hostname }}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+
+  /* Лайтбокс */
+  #lightbox {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.92);
+    z-index: 9999; align-items: center; justify-content: center; flex-direction: column;
+  }
+  #lightbox.open { display: flex; }
+  #lightbox img { max-width: 95vw; max-height: 85vh; border-radius: 8px; box-shadow: 0 0 60px rgba(0,0,0,.8); }
+  #lb-time { color: #94a3b8; margin-top: 12px; font-size: 14px; }
+  #lb-close { position: fixed; top: 20px; right: 28px; font-size: 32px; color: #fff; cursor: pointer; line-height: 1; }
+  #lb-prev, #lb-next {
+    position: fixed; top: 50%; transform: translateY(-50%);
+    background: rgba(255,255,255,.08); border: none; color: #fff;
+    font-size: 28px; padding: 12px 18px; cursor: pointer; border-radius: 8px;
+  }
+  #lb-prev { left: 12px; } #lb-next { right: 12px; }
+  #lb-prev:hover, #lb-next:hover { background: rgba(255,255,255,.18); }
+
+  .shot-thumb { cursor: zoom-in; transition: transform .15s, box-shadow .15s; border-radius: 6px; overflow: hidden; }
+  .shot-thumb:hover { transform: scale(1.03); box-shadow: 0 0 0 2px #6366f1; }
+  .shot-thumb img { width: 100%; display: block; }
+</style>
+</head>
+<body class="p-6">
+
+<!-- Lightbox -->
+<div id="lightbox">
+  <span id="lb-close" onclick="closeLB()">✕</span>
+  <button id="lb-prev" onclick="lbNav(-1)">‹</button>
+  <img id="lb-img" src="" alt="">
+  <div id="lb-time"></div>
+  <button id="lb-next" onclick="lbNav(1)">›</button>
+</div>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Навигация -->
+  <div class="flex items-center gap-3 mb-6 text-sm">
+    <a href="/" class="text-slate-400 hover:text-white">← Все ПК</a>
+    <span class="text-slate-600">›</span>
+    {% if computer %}
+    <a href="/computer/{{ computer.id }}" class="text-slate-400 hover:text-white">{{ hostname }}</a>
+    {% else %}
+    <span class="text-slate-400">{{ hostname }}</span>
+    {% endif %}
+    <span class="text-slate-600">›</span>
+    <span class="text-white">Скриншоты</span>
+  </div>
+
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-white">{{ hostname }}</h1>
+      <p class="text-slate-400 mt-1">{{ day }} · {{ shots|length }} скриншотов</p>
+    </div>
+
+    <!-- Переход к дням -->
+    <div class="flex gap-2 flex-wrap" id="day-selector">
+      <span class="text-slate-500 text-sm self-center">Другие дни:</span>
+      <!-- Заполняется JS -->
+    </div>
+  </div>
+
+  <!-- Фильтр по времени -->
+  <div class="card p-4 mb-6 flex gap-4 items-center flex-wrap">
+    <span class="text-slate-400 text-sm">Показать с</span>
+    <input type="time" id="time-from" value="00:00" class="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500">
+    <span class="text-slate-400 text-sm">до</span>
+    <input type="time" id="time-to" value="23:59" class="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500">
+    <button onclick="applyFilter()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-1.5 rounded-lg">Применить</button>
+    <button onclick="resetFilter()" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-1.5 rounded-lg">Сбросить</button>
+    <span class="text-slate-500 text-sm ml-auto" id="visible-count">Всего: {{ shots|length }}</span>
+  </div>
+
+  <!-- Сетка скриншотов -->
+  {% if shots %}
+  <div id="shots-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+    {% for shot in shots %}
+    <div
+      class="shot-thumb card"
+      data-time="{{ shot.time }}"
+      data-url="{{ shot.url }}"
+      data-idx="{{ loop.index0 }}"
+      onclick="openLB({{ loop.index0 }})"
+    >
+      <img src="{{ shot.url }}" alt="{{ shot.time }}" loading="lazy">
+      <div class="px-2 py-1.5 text-xs text-slate-400 font-mono">{{ shot.time }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-20 text-slate-500">
+    <div class="text-5xl mb-4">📷</div>
+    <div class="text-lg">Нет скриншотов за {{ day }}</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const shots = [
+  {% for s in shots %}
+  { time: "{{ s.time }}", url: "{{ s.url }}" },
+  {% endfor %}
+];
+
+let lbIdx = 0;
+
+function openLB(idx) {
+  lbIdx = idx;
+  document.getElementById('lb-img').src = shots[idx].url;
+  document.getElementById('lb-time').textContent = shots[idx].time;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLB() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+function lbNav(dir) {
+  lbIdx = (lbIdx + dir + shots.length) % shots.length;
+  document.getElementById('lb-img').src = shots[lbIdx].url;
+  document.getElementById('lb-time').textContent = shots[lbIdx].time;
+}
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lightbox').classList.contains('open')) return;
+  if (e.key === 'ArrowRight') lbNav(1);
+  if (e.key === 'ArrowLeft') lbNav(-1);
+  if (e.key === 'Escape') closeLB();
+});
+
+function applyFilter() {
+  const from = document.getElementById('time-from').value;
+  const to = document.getElementById('time-to').value;
+  let visible = 0;
+  document.querySelectorAll('.shot-thumb').forEach(el => {
+    const t = el.dataset.time;
+    const show = t >= from && t <= to;
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  document.getElementById('visible-count').textContent = `Показано: ${visible}`;
+}
+function resetFilter() {
+  document.querySelectorAll('.shot-thumb').forEach(el => el.style.display = '');
+  document.getElementById('time-from').value = '00:00';
+  document.getElementById('time-to').value = '23:59';
+  document.getElementById('visible-count').textContent = `Всего: ${shots.length}`;
+}
+
+// Загружаем список дней
+const hostname = {{ hostname | tojson }};
+fetch(`/api/computer/{{ computer.id if computer else 0 }}/screenshot-days`)
+  .then(r => r.json())
+  .then(days => {
+    const sel = document.getElementById('day-selector');
+    days.slice(0, 7).forEach(d => {
+      const a = document.createElement('a');
+      a.href = `/screenshots/${hostname}/${d}`;
+      a.className = d === {{ day | tojson }}
+        ? 'px-3 py-1 rounded-lg text-sm bg-indigo-600 text-white font-medium'
+        : 'px-3 py-1 rounded-lg text-sm bg-slate-700 text-slate-300 hover:bg-slate-600';
+      a.textContent = d.slice(8) + '.' + d.slice(5, 7);
+      sel.appendChild(a);
+    });
+  });
+</script>
+</body>
+</html>

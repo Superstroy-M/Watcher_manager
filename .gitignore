@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Env
+.env
+*.env
+
+# Logs
+*.log
+agent.log
+offline_buffer.jsonl
+screenshots_offline/
+
+# Screenshots (хранятся в S3)
+server/screenshots/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+postgres_data/
