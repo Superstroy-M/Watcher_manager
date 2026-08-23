@@ -20,7 +20,10 @@ from s3_storage import (
     upload_screenshot, list_screenshots, list_screenshot_days,
     get_screenshot_url, SCREENSHOT_STORAGE
 )
-from activity_log import save_activity, load_activity, get_activity_for_screenshot
+from activity_log import (
+    save_activity, load_activity, get_activity_for_screenshot,
+    build_report_html, _s3_get_json
+)
 
 API_KEY = os.getenv("API_KEY", "change_this_secret_key_123")
 SCREENSHOTS_DIR = Path(os.getenv("SCREENSHOTS_DIR", "./screenshots"))
@@ -590,23 +593,79 @@ def screenshot_file(hostname: str, day: str, filename: str):
 
 
 @app.get("/report/{hostname}/{day}")
-def download_report(hostname: str, day: str):
-    """Скачать текстовый отчёт за день."""
-    from fastapi.responses import StreamingResponse
+def download_report(hostname: str, day: str, fmt: str = "html"):
+    """Отчёт за день. Генерируется на лету из S3-данных."""
+    from fastapi.responses import StreamingResponse, HTMLResponse as HR
     import io
+    if fmt == "html":
+        html = build_report_html(hostname, day)
+        return HR(html)
+    # txt fallback
     try:
         resp = get_s3().get_object(
             Bucket=os.getenv("S3_BUCKET", "watcher"),
-            Key=f"screenshots/{hostname}/{day}/report.txt"
+            Key=f"screenshots/{hostname}/{day}/report.html"
         )
-        content = resp["Body"].read()
         return StreamingResponse(
-            io.BytesIO(content),
-            media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename=report_{hostname}_{day}.txt"}
+            io.BytesIO(resp["Body"].read()),
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=report_{hostname}_{day}.html"}
         )
     except Exception:
         raise HTTPException(status_code=404, detail="Report not found")
+
+
+@app.get("/api/activity/{hostname}/{day}")
+def api_activity(hostname: str, day: str):
+    """Сырые события за день (activity.json)."""
+    return load_activity(hostname, day)
+
+
+@app.get("/api/activity/{hostname}/{day}/timeline")
+def api_timeline(hostname: str, day: str):
+    """Дедуплицированные сессии (timeline.json)."""
+    return _s3_get_json(hostname, day, "timeline.json")
+
+
+@app.get("/api/activity/{hostname}/{day}/summary")
+def api_summary(hostname: str, day: str):
+    """Агрегаты за день (summary.json)."""
+    return _s3_get_json(hostname, day, "summary.json")
+
+
+@app.get("/api/screenshots/{hostname}/{day}")
+def api_screenshots_rich(hostname: str, day: str):
+    """Скриншоты + activity в одном ответе."""
+    if SCREENSHOT_STORAGE == "s3":
+        shots = list_screenshots(hostname, day)
+        activity = load_activity(hostname, day)
+    else:
+        day_dir = SCREENSHOTS_DIR / hostname / day
+        files = sorted(day_dir.glob("*.jpg")) if day_dir.exists() else []
+        shots = [{"time": f.stem.replace("-", ":"), "url": f"/screenshots/img/{hostname}/{day}/{f.name}"} for f in files]
+        activity = []
+
+    for shot in shots:
+        ev = get_activity_for_screenshot(activity, shot["time"])
+        shot["app"] = ev.get("app", "") if ev else ""
+        shot["app_name"] = ev.get("app_name", "") if ev else ""
+        shot["window_title"] = ev.get("window_title", "") if ev else ""
+        shot["productivity"] = ev.get("productivity", "neutral") if ev else "neutral"
+        shot["category"] = ev.get("category", "other") if ev else "other"
+        shot["event_type"] = ev.get("event_type", "focus") if ev else "focus"
+
+    summary = _s3_get_json(hostname, day, "summary.json")
+    return {
+        "hostname": hostname,
+        "day": day,
+        "summary": {
+            "active_seconds": summary.get("active_seconds", 0) if summary else 0,
+            "idle_seconds": summary.get("idle_seconds", 0) if summary else 0,
+            "active_formatted": summary.get("active_formatted", "") if summary else "",
+            "productive_percent": summary.get("productivity", {}).get("productive_percent", 0) if summary else 0,
+        },
+        "screenshots": shots,
+    }
 
 
 @app.get("/gallery", response_class=HTMLResponse)def gallery(request: Request, db: Session = Depends(get_db)):
