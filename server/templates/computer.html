@@ -253,10 +253,6 @@
 
 <script>
 // ── Chart ────────────────────────────────────────────────────────────────────
-const statsData = {{ stats | tojson(default=lambda o: {
-  'process_name': o.process_name,
-  'total_seconds': o.total_seconds
-}) if stats else '[]' }};
 
 // Safer Jinja2 approach
 const rawStats = [

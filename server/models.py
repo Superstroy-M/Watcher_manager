@@ -6,6 +6,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from database import Base
 
+# BigInteger PK совместимый с SQLite (для тестов), и с PostgreSQL (в продакшне)
+_BigPK = BigInteger().with_variant(Integer(), "sqlite")
+
 
 class Computer(Base):
     __tablename__ = "computers"
@@ -30,7 +33,7 @@ class Computer(Base):
 class Event(Base):
     __tablename__ = "events"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(_BigPK, primary_key=True, index=True)
     computer_id = Column(Integer, ForeignKey("computers.id"), nullable=False, index=True)
     started_at = Column(DateTime, nullable=False, index=True)
     ended_at = Column(DateTime)
@@ -63,7 +66,7 @@ class ProcessSnapshot(Base):
     """Снимок всех запущенных процессов раз в 5 минут."""
     __tablename__ = "process_snapshots"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(_BigPK, primary_key=True, index=True)
     computer_id = Column(Integer, ForeignKey("computers.id"), nullable=False, index=True)
     captured_at = Column(DateTime, nullable=False, index=True)
     # JSON список: [{name, pid, cpu_percent, memory_mb, username}]
@@ -76,7 +79,7 @@ class NetworkConnection(Base):
     """Активные сетевые подключения процессов."""
     __tablename__ = "network_connections"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(_BigPK, primary_key=True, index=True)
     computer_id = Column(Integer, ForeignKey("computers.id"), nullable=False, index=True)
     captured_at = Column(DateTime, nullable=False, index=True)
     process_name = Column(String(255), index=True)

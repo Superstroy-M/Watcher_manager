@@ -18,7 +18,7 @@ from database import get_db, init_db
 from models import Computer, Event, DailyStat, ProcessSnapshot, NetworkConnection, PrintJob
 from s3_storage import (
     upload_screenshot, list_screenshots, list_screenshot_days,
-    get_screenshot_url, SCREENSHOT_STORAGE
+    get_screenshot_url, get_s3, SCREENSHOT_STORAGE
 )
 from activity_log import (
     save_activity, load_activity, get_activity_for_screenshot,
@@ -337,7 +337,12 @@ def computer_detail(
     if not computer:
         raise HTTPException(status_code=404)
 
-    selected_date = date.fromisoformat(day) if day else date.today()
+    selected_date = date.today()
+    if day:
+        try:
+            selected_date = date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
 
     events = (
         db.query(Event)
@@ -463,7 +468,12 @@ def api_live(db: Session = Depends(get_db)):
 
 @app.get("/api/computer/{computer_id}/events")
 def api_events(computer_id: int, day: Optional[str] = None, db: Session = Depends(get_db)):
-    selected_date = date.fromisoformat(day) if day else date.today()
+    selected_date = date.today()
+    if day:
+        try:
+            selected_date = date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
     events = (
         db.query(Event)
         .filter(Event.computer_id == computer_id, func.date(Event.started_at) == selected_date)
@@ -668,7 +678,8 @@ def api_screenshots_rich(hostname: str, day: str):
     }
 
 
-@app.get("/gallery", response_class=HTMLResponse)def gallery(request: Request, db: Session = Depends(get_db)):
+@app.get("/gallery", response_class=HTMLResponse)
+def gallery(request: Request, db: Session = Depends(get_db)):
     """Единая галерея — выбрать ПК и дату."""
     return templates.TemplateResponse("gallery.html", {"request": request})
 

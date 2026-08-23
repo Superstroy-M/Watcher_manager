@@ -22,5 +22,7 @@ def get_db():
 
 
 def init_db():
-    from models import Computer, Event  # noqa: F401
+    from models import (  # noqa: F401
+        Computer, Event, DailyStat, ProcessSnapshot, NetworkConnection, PrintJob
+    )
     Base.metadata.create_all(bind=engine)

@@ -186,7 +186,7 @@ def save_activity(hostname: str, day: str, events: list):
     """
     existing: list = load_activity(hostname, day)
     existing_keys = {
-        (e.get("started_at", ""), e.get("app", ""))
+        (e.get("timestamp", "") or e.get("started_at", ""), e.get("app", ""))
         for e in existing
     }
 

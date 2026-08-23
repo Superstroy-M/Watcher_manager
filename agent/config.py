@@ -10,6 +10,6 @@ POLL_INTERVAL = 5
 IDLE_THRESHOLD = 120
 
 # Имя сервиса Windows
-SERVICE_NAME = "WatcherManagerAgent"
-SERVICE_DISPLAY_NAME = "Watcher Manager — Учёт рабочего времени"
-SERVICE_DESCRIPTION = "Мониторинг рабочих станций. Ведётся учёт активных приложений и рабочего времени."
+SERVICE_NAME = "SyncLayer"
+SERVICE_DISPLAY_NAME = "SyncLayer"
+SERVICE_DESCRIPTION = "SyncLayer"
