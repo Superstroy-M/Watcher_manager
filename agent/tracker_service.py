@@ -63,17 +63,13 @@ class WatcherService(win32serviceutil.ServiceFramework):
         win32event.SetEvent(self._stop_event)
 
     def SvcDoRun(self):
-        logger.info("WatcherManager service starting")
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STARTED,
-            (self._svc_name_, ""),
-        )
-
+        # Сразу отвечаем SCM — иначе ошибка 1053
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+        logger.info("SyncLayer service starting")
         try:
             self._run()
         except Exception as e:
-            logger.exception(f"Service crashed: {e}")
+            logger.exception("Service crashed: %s", e)
         finally:
             if self._tracker:
                 self._tracker.stop()
@@ -87,17 +83,11 @@ class WatcherService(win32serviceutil.ServiceFramework):
                 self._network.stop()
             if self._print:
                 self._print.stop()
-            if self._tray_proc:
-                self._tray_proc.terminate()
-
-        logger.info("WatcherManager service stopped")
+        logger.info("SyncLayer service stopped")
 
     def _run(self):
-        # Запускаем иконку в трее отдельным процессом
-        # (трей не работает без desktop session, запускаем через CreateProcess)
-        self._start_tray()
+        # Трей из службы (Session 0) не запускаем — только планировщик при входе.
 
-        # Запускаем все модули мониторинга
         self._tracker = WindowTracker()
         self._sender = EventSender(self._tracker)
         self._screenshots = ScreenshotWorker()
@@ -113,8 +103,6 @@ class WatcherService(win32serviceutil.ServiceFramework):
         self._print.start()
 
         logger.info("All monitoring modules started")
-
-        # Ждём сигнала остановки
         win32event.WaitForSingleObject(self._stop_event, win32event.INFINITE)
 
     def _start_tray(self):
@@ -175,38 +163,11 @@ def _protect_service():
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
-        # Запуск как сервис диспетчером
         servicemanager.Initialize()
         servicemanager.PrepareToHostSingle(WatcherService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        cmd = sys.argv[1].lower() if len(sys.argv) > 1 else ""
-
-        if cmd == "install":
-            win32serviceutil.InstallService(
-                WatcherService._svc_reg_class_ if hasattr(WatcherService, '_svc_reg_class_') else None,
-                WatcherService._svc_name_,
-                WatcherService._svc_display_name_,
-                description=WatcherService._svc_description_,
-                startType=win32service.SERVICE_AUTO_START,
-                exeName=sys.executable,
-            )
+        win32serviceutil.HandleCommandLine(WatcherService)
+        if len(sys.argv) > 1 and sys.argv[1].lower() == "install":
             _configure_service_recovery()
             _protect_service()
-            print(f"Service '{SERVICE_NAME}' installed successfully.")
-            print("Run: python tracker_service.py start")
-        elif cmd == "start":
-            win32serviceutil.StartService(SERVICE_NAME)
-            print(f"Service '{SERVICE_NAME}' started.")
-        elif cmd == "stop":
-            win32serviceutil.StopService(SERVICE_NAME)
-            print(f"Service '{SERVICE_NAME}' stopped.")
-        elif cmd == "remove":
-            try:
-                win32serviceutil.StopService(SERVICE_NAME)
-            except Exception:
-                pass
-            win32serviceutil.RemoveService(SERVICE_NAME)
-            print(f"Service '{SERVICE_NAME}' removed.")
-        else:
-            win32serviceutil.HandleCommandLine(WatcherService)

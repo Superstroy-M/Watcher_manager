@@ -24,8 +24,9 @@ timeout /t 2 /nobreak >nul
 echo [2/3] Удаление сервиса...
 %PYTHON% "%AGENT_DIR%tracker_service.py" remove
 
-echo [3/3] Удаление задачи планировщика (трей)...
-schtasks /Delete /TN "WatcherManagerTray" /F >nul 2>&1
+echo [3/3] Удаление задач планировщика...
+schtasks /Delete /TN "SyncLayerAgent" /F >nul 2>&1
+schtasks /Delete /TN "SyncLayerTray" /F >nul 2>&1
 
 echo.
 echo Агент удалён.

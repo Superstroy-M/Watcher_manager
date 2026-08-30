@@ -55,6 +55,13 @@
 
     <!-- Date selector -->
     <div class="flex items-center gap-2 flex-wrap">
+      <input
+        id="day-picker"
+        type="date"
+        value="{{ selected_date }}"
+        class="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+        onchange="goToDay(this.value)"
+      />
       {% for d in available_days[:14] %}
       <a
         href="/computer/{{ computer.id }}?day={{ d }}"
@@ -68,14 +75,14 @@
 
   <!-- Stats cards -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="card p-4 text-center">
+    <a href="#events-table" class="card p-4 text-center hover:border-indigo-500 transition-colors">
       <div class="text-2xl font-bold text-indigo-400">{{ events|length }}</div>
       <div class="text-xs text-slate-400 mt-1">Событий</div>
-    </div>
-    <div class="card p-4 text-center">
+    </a>
+    <a href="#apps-block" class="card p-4 text-center hover:border-indigo-500 transition-colors">
       <div class="text-2xl font-bold text-blue-400">{{ stats|length }}</div>
       <div class="text-xs text-slate-400 mt-1">Приложений</div>
-    </div>
+    </a>
     <div class="card p-4 text-center">
       <div class="text-2xl font-bold text-green-400">
         {% set total = namespace(s=0) %}
@@ -84,12 +91,12 @@
       </div>
       <div class="text-xs text-slate-400 mt-1">Активное время</div>
     </div>
-    <div class="card p-4 text-center">
+    <label for="day-picker" class="card p-4 text-center cursor-pointer hover:border-indigo-500 transition-colors">
       <div class="text-2xl font-bold text-yellow-400">
         {{ selected_date.strftime('%d.%m.%Y') }}
       </div>
       <div class="text-xs text-slate-400 mt-1">Дата</div>
-    </div>
+    </label>
   </div>
 
   <!-- Productivity bar -->
@@ -137,7 +144,7 @@
       </div>
 
       <!-- Events table -->
-      <div class="card p-5 mt-6">
+      <div class="card p-5 mt-6" id="events-table">
         <h2 class="text-lg font-semibold text-white mb-4">Журнал событий</h2>        <div class="overflow-y-auto max-h-96">
           <table class="w-full text-sm">
             <thead class="sticky top-0 bg-slate-800">
@@ -152,7 +159,7 @@
               {% for event in events %}
               <tr class="border-t border-slate-700 hover:bg-slate-800 {% if event.event_type == 'idle' %}opacity-50{% endif %}">
                 <td class="py-2 pr-4 text-slate-300 whitespace-nowrap">
-                  {{ event.started_at.strftime('%H:%M:%S') }}
+                  {{ (event.started_at|local_dt).strftime('%H:%M:%S') }}
                 </td>
                 <td class="py-2 pr-4">
                   <span class="
@@ -199,7 +206,7 @@
             <tbody>
               {% for job in print_jobs %}
               <tr class="border-t border-slate-700 hover:bg-slate-800">
-                <td class="py-2 pr-4 text-slate-300 whitespace-nowrap">{{ job.printed_at.strftime('%H:%M') }}</td>
+                <td class="py-2 pr-4 text-slate-300 whitespace-nowrap">{{ (job.printed_at|local_dt).strftime('%H:%M') }}</td>
                 <td class="py-2 pr-4 text-slate-200 max-w-xs truncate" title="{{ job.document_name }}">{{ job.document_name or '—' }}</td>
                 <td class="py-2 pr-4 text-slate-400">{{ job.printer_name or '—' }}</td>
                 <td class="py-2 text-slate-300">{{ job.pages }}</td>
@@ -214,7 +221,7 @@
 
     <!-- App stats + chart -->
     <div>
-      <div class="card p-5 mb-6">
+      <div class="card p-5 mb-6" id="apps-block">
         <h2 class="text-lg font-semibold text-white mb-4">Приложения за день</h2>
         <canvas id="appsChart" height="200"></canvas>
       </div>
@@ -299,8 +306,8 @@ const events = [
   {% for e in events %}
   {
     id: {{ e.id }},
-    started_at: "{{ e.started_at.strftime('%H:%M:%S') }}",
-    started_ts: {{ e.started_at.hour * 3600 + e.started_at.minute * 60 + e.started_at.second }},
+    started_at: "{{ (e.started_at|local_dt).strftime('%H:%M:%S') }}",
+    started_ts: {{ (e.started_at|local_dt).hour * 3600 + (e.started_at|local_dt).minute * 60 + (e.started_at|local_dt).second }},
     duration: {{ e.duration_seconds }},
     process: {{ e.process_name | tojson }},
     title: {{ (e.window_title or '') | tojson }},
@@ -380,6 +387,11 @@ function hideTip() { tooltip.style.display = 'none'; }
 document.addEventListener('mousemove', e => { if (tooltip.style.display !== 'none') moveTip(e); });
 
 buildTimeline();
+
+function goToDay(day) {
+  if (!day) return;
+  window.location.href = `/computer/{{ computer.id }}?day=${day}`;
+}
 </script>
 </body>
 </html>

@@ -27,6 +27,8 @@ from activity_log import (
 
 API_KEY = os.getenv("API_KEY", "change_this_secret_key_123")
 SCREENSHOTS_DIR = Path(os.getenv("SCREENSHOTS_DIR", "./screenshots"))
+DISPLAY_TZ_OFFSET_HOURS = int(os.getenv("DISPLAY_TZ_OFFSET_HOURS", "3"))
+DISPLAY_TZ_OFFSET = timedelta(hours=DISPLAY_TZ_OFFSET_HOURS)
 
 # Категории продуктивности (расширяемые)
 PRODUCTIVITY = {
@@ -56,6 +58,21 @@ except Exception:
     pass
 
 templates = Jinja2Templates(directory="templates")
+
+
+def to_local_dt(dt: Optional[datetime]):
+    if dt is None:
+        return None
+    return dt + DISPLAY_TZ_OFFSET
+
+
+templates.env.filters["local_dt"] = to_local_dt
+
+
+def local_day_utc_bounds(day_value: date) -> tuple[datetime, datetime]:
+    local_start = datetime.combine(day_value, datetime.min.time())
+    local_end = local_start + timedelta(days=1)
+    return local_start - DISPLAY_TZ_OFFSET, local_end - DISPLAY_TZ_OFFSET
 
 
 @app.on_event("startup")
@@ -344,28 +361,37 @@ def computer_detail(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
 
+    start_utc, end_utc = local_day_utc_bounds(selected_date)
     events = (
         db.query(Event)
-        .filter(Event.computer_id == computer_id, func.date(Event.started_at) == selected_date)
+        .filter(Event.computer_id == computer_id, Event.started_at >= start_utc, Event.started_at < end_utc)
         .order_by(Event.started_at)
         .all()
     )
 
-    stats = (
-        db.query(DailyStat)
-        .filter(DailyStat.computer_id == computer_id, DailyStat.date == selected_date)
-        .order_by(desc(DailyStat.total_seconds))
-        .all()
-    )
+    # Строим статистику приложений из отфильтрованных событий (локальный день пользователя).
+    stats_map: dict[str, dict] = {}
+    for ev in events:
+        key = ev.process_name or "unknown"
+        if key not in stats_map:
+            stats_map[key] = {"process_name": key, "total_seconds": 0, "launches_count": 0}
+        stats_map[key]["total_seconds"] += ev.duration_seconds or 0
+        stats_map[key]["launches_count"] += 1
+    stats = sorted(stats_map.values(), key=lambda x: x["total_seconds"], reverse=True)
 
-    available_days = (
-        db.query(func.date(Event.started_at).label("day"))
+    # Доступные дни также считаем по локальной дате.
+    day_set = set()
+    all_event_times = (
+        db.query(Event.started_at)
         .filter(Event.computer_id == computer_id)
-        .group_by(func.date(Event.started_at))
-        .order_by(desc("day"))
-        .limit(30)
+        .order_by(desc(Event.started_at))
+        .limit(3000)
         .all()
     )
+    for row in all_event_times:
+        if row.started_at:
+            day_set.add((row.started_at + DISPLAY_TZ_OFFSET).date().isoformat())
+    available_days = sorted(day_set, reverse=True)[:30]
 
     # Подсчёт продуктивности
     productive_s = neutral_s = distracting_s = 0
@@ -381,7 +407,7 @@ def computer_detail(
     # Задания на печать за день
     print_jobs = (
         db.query(PrintJob)
-        .filter(PrintJob.computer_id == computer_id, func.date(PrintJob.printed_at) == selected_date)
+        .filter(PrintJob.computer_id == computer_id, PrintJob.printed_at >= start_utc, PrintJob.printed_at < end_utc)
         .order_by(desc(PrintJob.printed_at))
         .all()
     )
@@ -392,7 +418,7 @@ def computer_detail(
         "events": events,
         "stats": stats,
         "selected_date": selected_date,
-        "available_days": [str(r.day) for r in available_days],
+        "available_days": available_days,
         "productive_s": productive_s,
         "neutral_s": neutral_s,
         "distracting_s": distracting_s,
@@ -474,9 +500,10 @@ def api_events(computer_id: int, day: Optional[str] = None, db: Session = Depend
             selected_date = date.fromisoformat(day)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+    start_utc, end_utc = local_day_utc_bounds(selected_date)
     events = (
         db.query(Event)
-        .filter(Event.computer_id == computer_id, func.date(Event.started_at) == selected_date)
+        .filter(Event.computer_id == computer_id, Event.started_at >= start_utc, Event.started_at < end_utc)
         .order_by(Event.started_at)
         .all()
     )

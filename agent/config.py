@@ -1,5 +1,5 @@
 # Настройки агента — задайте перед установкой
-SERVER_URL = "http://YOUR_SERVER_IP:8000"  # Адрес вашего сервера
+SERVER_URL = "http://201.51.8.127:8000"  # Адрес вашего сервера
 API_KEY = "change_this_secret_key_123"     # Должен совпадать с сервером
 AGENT_VERSION = "1.0"
 

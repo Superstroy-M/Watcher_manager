@@ -15,7 +15,16 @@ from PIL import Image, ImageDraw
 
 from config import SERVER_URL, SERVICE_NAME
 
-ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+def _icon_path() -> str:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        p = os.path.join(sys._MEIPASS, "icon.png")
+        if os.path.isfile(p):
+            return p
+        return os.path.join(os.path.dirname(sys.executable), "icon.png")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+
+
+ICON_PATH = _icon_path()
 
 
 def _create_icon_image(online: bool = True) -> Image.Image:

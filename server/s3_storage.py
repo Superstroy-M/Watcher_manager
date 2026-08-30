@@ -87,7 +87,12 @@ def list_screenshots(hostname: str, day: str) -> list[dict]:
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                time_str = key.split("/")[-1].replace(".jpg", "").replace("-", ":")
+                filename = key.split("/")[-1]
+                # В галерею добавляем только изображения.
+                low = filename.lower()
+                if not (low.endswith(".jpg") or low.endswith(".jpeg") or low.endswith(".png") or low.endswith(".webp")):
+                    continue
+                time_str = filename.rsplit(".", 1)[0].replace("-", ":")
                 result.append({
                     "time": time_str,
                     "key": key,

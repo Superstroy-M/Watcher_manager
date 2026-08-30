@@ -79,7 +79,7 @@ class WindowTracker:
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._pending_events: list = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -100,7 +100,8 @@ class WindowTracker:
 
     def stop(self):
         self._running = False
-        self._flush_current()
+        with self._lock:
+            self._flush_current()
 
     def _loop(self):
         while self._running:
@@ -114,39 +115,41 @@ class WindowTracker:
         idle_secs = get_idle_seconds()
         now = datetime.utcnow()
 
-        if idle_secs >= IDLE_THRESHOLD:
-            # Пользователь не активен — закрываем текущее событие, фиксируем idle
-            if not self._is_idle:
-                self._flush_current()
-                self._is_idle = True
-                self._current_process = "idle"
-                self._current_title = ""
-                self._current_started = now
-        else:
-            info = get_active_window_info()
-            new_proc = info["process_name"]
-            new_title = info["window_title"]
+        with self._lock:
+            if idle_secs >= IDLE_THRESHOLD:
+                # Пользователь не активен — закрываем текущее событие, фиксируем idle
+                if not self._is_idle:
+                    self._flush_current(now=now)
+                    self._is_idle = True
+                    self._current_process = "idle"
+                    self._current_title = ""
+                    self._current_started = now
+            else:
+                info = get_active_window_info()
+                new_proc = info["process_name"]
+                new_title = info["window_title"]
 
-            if self._is_idle:
-                # Вышли из idle
-                self._flush_current()
-                self._is_idle = False
-                self._current_process = new_proc
-                self._current_title = new_title
-                self._current_started = now
-            elif new_proc != self._current_process or new_title != self._current_title:
-                # Сменилось окно
-                self._flush_current()
-                self._current_process = new_proc
-                self._current_title = new_title
-                self._current_started = now
-            # Иначе — то же окно, продолжаем
+                if self._is_idle:
+                    # Вышли из idle
+                    self._flush_current(now=now)
+                    self._is_idle = False
+                    self._current_process = new_proc
+                    self._current_title = new_title
+                    self._current_started = now
+                elif new_proc != self._current_process or new_title != self._current_title:
+                    # Сменилось окно
+                    self._flush_current(now=now)
+                    self._current_process = new_proc
+                    self._current_title = new_title
+                    self._current_started = now
+                # Иначе — то же окно, продолжаем
 
-    def _flush_current(self):
+    def _flush_current(self, now: Optional[datetime] = None):
         if not self._current_process or not self._current_started:
             return
 
-        now = datetime.utcnow()
+        if now is None:
+            now = datetime.utcnow()
         duration = int((now - self._current_started).total_seconds())
         if duration < 1:
             return
@@ -161,12 +164,32 @@ class WindowTracker:
             "event_type": "idle" if self._is_idle else "focus",
         }
 
-        with self._lock:
-            self._pending_events.append(event)
+        # _flush_current всегда вызывается под self._lock,
+        # поэтому не берем блокировку повторно.
+        self._pending_events.append(event)
 
         self._current_process = None
         self._current_title = None
         self._current_started = None
+
+    def force_checkpoint(self):
+        """
+        Принудительно закрывает текущий интервал и сразу открывает новый
+        с тем же приложением. Нужен, чтобы события появлялись регулярно,
+        даже если пользователь долго в одном окне.
+        """
+        now = datetime.utcnow()
+        with self._lock:
+            if not self._current_process or not self._current_started:
+                return
+            process_name = self._current_process
+            window_title = self._current_title
+            is_idle = self._is_idle
+            self._flush_current(now=now)
+            self._current_process = process_name
+            self._current_title = window_title
+            self._is_idle = is_idle
+            self._current_started = now
 
     def pop_events(self) -> list:
         """Забрать накопленные события и очистить буфер."""
