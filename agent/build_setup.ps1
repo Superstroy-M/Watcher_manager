@@ -31,6 +31,7 @@ python -m PyInstaller `
   --clean `
   --onefile `
   --name SyncLayerService `
+  --hidden-import=win32timezone `
   tracker_service.py `
   --distpath dist
 
