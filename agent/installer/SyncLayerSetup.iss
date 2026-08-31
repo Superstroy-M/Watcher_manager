@@ -29,8 +29,12 @@ Filename: "{cmd}"; Parameters: "/C sc delete SyncLayer"; Flags: runhidden waitun
 Filename: "{app}\SyncLayerService.exe"; Parameters: "install"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc config SyncLayer start= auto"; Flags: runhidden waituntilterminated
 Filename: "{app}\SyncLayerService.exe"; Parameters: "start"; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN SyncLayerAgent /F"; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/C schtasks /Create /F /TN SyncLayerAgent /TR """"{app}\SyncLayerAgent.exe"""" /SC ONLOGON /RL HIGHEST /IT"; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/C schtasks /Run /TN SyncLayerAgent"; Flags: runhidden waituntilterminated
 
 [UninstallRun]
+Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN SyncLayerAgent /F"; Flags: runhidden waituntilterminated
 Filename: "{app}\SyncLayerService.exe"; Parameters: "stop"; Flags: runhidden waituntilterminated
 Filename: "{app}\SyncLayerService.exe"; Parameters: "remove"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc delete SyncLayer"; Flags: runhidden waituntilterminated

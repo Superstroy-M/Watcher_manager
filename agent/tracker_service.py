@@ -24,9 +24,6 @@ import servicemanager
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import SERVICE_NAME, SERVICE_DISPLAY_NAME, SERVICE_DESCRIPTION
-from window_tracker import WindowTracker
-from sender import EventSender
-from screenshot import ScreenshotWorker
 from process_monitor import ProcessMonitor
 from network_monitor import NetworkMonitor
 from print_monitor import PrintMonitor
@@ -86,23 +83,20 @@ class WatcherService(win32serviceutil.ServiceFramework):
         logger.info("SyncLayer service stopped")
 
     def _run(self):
-        # Трей из службы (Session 0) не запускаем — только планировщик при входе.
-
-        self._tracker = WindowTracker()
-        self._sender = EventSender(self._tracker)
-        self._screenshots = ScreenshotWorker()
+        # В Session 0 нельзя корректно снимать пользовательский экран/активное окно:
+        # эти модули запускаются из user-сессии через SyncLayerAgent task.
+        self._tracker = None
+        self._sender = None
+        self._screenshots = None
         self._processes = ProcessMonitor()
         self._network = NetworkMonitor()
         self._print = PrintMonitor()
 
-        self._tracker.start()
-        self._sender.start()
-        self._screenshots.start()
         self._processes.start()
         self._network.start()
         self._print.start()
 
-        logger.info("All monitoring modules started")
+        logger.info("Service modules started (process/network/print). User activity modules run in SyncLayerAgent task.")
         win32event.WaitForSingleObject(self._stop_event, win32event.INFINITE)
 
     def _start_tray(self):
