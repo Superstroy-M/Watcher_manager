@@ -45,6 +45,14 @@ cd agent
 install.bat
 ```
 
+### 3. Один готовый установщик (SyncLayerSetup.exe)
+
+Если нужен единый файл для массового развёртывания (GPO/RMM/PowerShell):
+
+- В репозитории есть workflow `Build Windows Installer`.
+- Он собирает `SyncLayerSetup.exe` на Windows runner в GitHub Actions.
+- Установщик кладёт файлы в `C:\ProgramData\SyncLayer`, регистрирует и запускает службу `SyncLayer`, включает автозапуск после перезагрузки.
+
 ## Как работает защита от закрытия
 
 Агент устанавливается как **Windows Service** с учётной записью SYSTEM:
