@@ -27,6 +27,7 @@ echo [2/3] Удаление сервиса...
 echo [3/3] Удаление задач планировщика...
 schtasks /Delete /TN "SyncLayerAgent" /F >nul 2>&1
 schtasks /Delete /TN "SyncLayerTray" /F >nul 2>&1
+reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "SyncLayerAgent" /f >nul 2>&1
 
 echo.
 echo Агент удалён.

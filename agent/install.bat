@@ -93,6 +93,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [5.1/6] Create autostart for any logged user
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "SyncLayerAgent" /t REG_SZ /d "\"%PYW%\" \"%DEST%\app_main.py\"" /f >> "%LOG%" 2>&1
+
 echo [6/6] Start agent now
 schtasks /Run /TN "SyncLayerAgent" >> "%LOG%" 2>&1
 if errorlevel 1 (

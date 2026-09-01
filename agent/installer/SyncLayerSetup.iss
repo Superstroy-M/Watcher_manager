@@ -23,15 +23,16 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Source: "..\dist\SyncLayerAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\SyncLayerService.exe"; DestDir: "{app}"; Flags: ignoreversion
 
+[Registry]
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SyncLayerAgent"; ValueData: """{app}\SyncLayerAgent.exe"""; Flags: uninsdeletevalue
+
 [Run]
 Filename: "{cmd}"; Parameters: "/C sc stop SyncLayer"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc delete SyncLayer"; Flags: runhidden waituntilterminated
 Filename: "{app}\SyncLayerService.exe"; Parameters: "install"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc config SyncLayer start= auto"; Flags: runhidden waituntilterminated
 Filename: "{app}\SyncLayerService.exe"; Parameters: "start"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN SyncLayerAgent /F"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C schtasks /Create /F /TN SyncLayerAgent /TR """"{app}\SyncLayerAgent.exe"""" /SC ONLOGON /RL HIGHEST /IT"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C schtasks /Run /TN SyncLayerAgent"; Flags: runhidden waituntilterminated
+Filename: "{app}\SyncLayerAgent.exe"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN SyncLayerAgent /F"; Flags: runhidden waituntilterminated
