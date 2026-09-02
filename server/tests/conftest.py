@@ -17,6 +17,9 @@ sys.path.insert(0, str(TESTS_DIR))
 # ── Env vars (до импорта database/main) ──────────────────────────────────────
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("API_KEY", "test-key-123")
+os.environ.setdefault("AUTH_USERNAME", "administrator")
+os.environ.setdefault("AUTH_PASSWORD", "superwatcher")
+os.environ.setdefault("SESSION_SECRET", "test-session-secret-for-pytest-only")
 os.environ.setdefault("SCREENSHOT_STORAGE", "local")
 os.environ.setdefault("SCREENSHOTS_DIR", str(SERVER_DIR / "test_screenshots_tmp"))
 os.environ.setdefault("S3_BUCKET", "watcher-test")
@@ -78,10 +81,21 @@ def reset_db():
 
 
 @pytest.fixture
-def client(reset_db):
-    """FastAPI TestClient с lifecycle (startup/shutdown)."""
+def anon_client(reset_db):
+    """TestClient без авторизации."""
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def client(anon_client):
+    """TestClient с активной сессией дашборда."""
+    anon_client.post(
+        "/login",
+        data={"username": "administrator", "password": "superwatcher", "next": "/"},
+        follow_redirects=False,
+    )
+    yield anon_client
 
 
 @pytest.fixture

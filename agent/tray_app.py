@@ -78,7 +78,7 @@ class TrayApp:
         import requests
         while self._running:
             try:
-                r = requests.get(f"{SERVER_URL}/api/computers", timeout=5)
+                r = requests.get(f"{SERVER_URL}/api/health", timeout=5)
                 online = r.status_code == 200
             except Exception:
                 online = False

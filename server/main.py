@@ -10,6 +10,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from pydantic import BaseModel
@@ -23,6 +24,12 @@ from s3_storage import (
 from activity_log import (
     save_activity, load_activity, get_activity_for_screenshot,
     build_report_html, _s3_get_json
+)
+from auth import (
+    AUTH_USERNAME,
+    AUTH_PASSWORD,
+    SESSION_SECRET,
+    DashboardAuthMiddleware,
 )
 
 API_KEY = os.getenv("API_KEY", "change_this_secret_key_123")
@@ -51,6 +58,8 @@ DISTRACTING_SITES = [
 ]
 
 app = FastAPI(title="SyncLayer", docs_url=None, redoc_url=None)
+app.add_middleware(DashboardAuthMiddleware, api_key=API_KEY)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, max_age=60 * 60 * 24 * 7)
 
 try:
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -312,6 +321,54 @@ def add_print_job(data: PrintJobSchema, db: Session = Depends(get_db), _=Depends
     db.add(job)
     db.commit()
     return {"status": "ok"}
+
+
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/"):
+    if request.session.get("authenticated"):
+        target = next if next.startswith("/") else "/"
+        return RedirectResponse(target, status_code=303)
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "next": next,
+        "error": None,
+    })
+
+
+@app.post("/login", response_class=HTMLResponse)
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+):
+    if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+        request.session["authenticated"] = True
+        request.session["username"] = username
+        target = next if next.startswith("/") else "/"
+        return RedirectResponse(target, status_code=303)
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "next": next,
+            "error": "Неверный логин или пароль",
+        },
+        status_code=401,
+    )
+
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
