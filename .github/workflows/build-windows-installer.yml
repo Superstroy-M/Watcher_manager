@@ -5,7 +5,14 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "agent/**"
+      - "agent/app_main.py"
+      - "agent/tracker_service.py"
+      - "agent/screenshot.py"
+      - "agent/config.py"
+      - "agent/requirements.txt"
+      - "agent/build_setup.ps1"
+      - "agent/installer/**"
+      - "agent/icon.png"
       - ".github/workflows/build-windows-installer.yml"
 
 jobs:
