@@ -54,11 +54,9 @@ def test_install_common_contains_required_functions():
         "function Test-SyncLayerInstall",
         "function Invoke-SyncLayerInstallFinalize",
         "function Get-SyncLayerInteractiveUser",
-        "function Get-SyncLayerTaskRunAccount",
         "function Invoke-SchtasksCreateSyncLayerTask",
         "function Write-SyncLayerInstallLog",
         "function Assert-SyncLayerScheduledTask",
-        "function Register-SyncLayerScheduledTaskViaApi",
         "$Script:TaskName = 'SyncLayerAgent'",
     ]:
         assert pattern in text, f"install_common.ps1 missing: {pattern}"
@@ -76,9 +74,10 @@ def test_installer_runs_finalize_and_verify():
 def test_install_common_uses_direct_schtasks_tr():
     text = (AGENT_DIR / "install_common.ps1").read_text(encoding="utf-8")
     assert "Invoke-SchtasksCreateSyncLayerTask" in text
-    assert "TASK CREATE CMD:" in text
+    assert "TASK CREATE ARGV:" in text
+    assert "/RU" not in text.split("function Invoke-SchtasksCreateSyncLayerTask")[1].split("function Assert")[0]
     assert "cmd.exe /c cd /d" not in text
-    assert "Program Files" not in text.split("Get-SyncLayerAgentDir")[0]
+    assert "Register-SyncLayerScheduledTaskViaApi" not in text
 
 
 def test_install_finalize_uses_common_helpers():

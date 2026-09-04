@@ -186,25 +186,6 @@ function Get-SyncLayerInteractiveUser {
     throw 'No interactive user session (Win32_ComputerSystem.UserName is empty)'
 }
 
-function Get-SyncLayerTaskRunAccount {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$InteractiveUser
-    )
-
-    if ($InteractiveUser -match '^([^\\]+)\\(.+)$') {
-        $domain = $Matches[1]
-        $user = $Matches[2]
-        $computer = $env:COMPUTERNAME
-        if ($domain.Equals($computer, [StringComparison]::OrdinalIgnoreCase) -or $domain -eq '.') {
-            return $user
-        }
-        return "$domain\$user"
-    }
-
-    return $InteractiveUser
-}
-
 function Resolve-SyncLayerAgentPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -230,28 +211,20 @@ function Invoke-SchtasksQuerySyncLayerTask {
 function Invoke-SchtasksCreateSyncLayerTask {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$AgentPath,
-        [Parameter(Mandatory = $true)]
-        [string]$RunAs
+        [string]$AgentPath
     )
 
     $resolvedAgent = Resolve-SyncLayerAgentPath -AgentPath $AgentPath
-    $trArg = "`"$resolvedAgent`""
     $argList = @(
-        '/Create', '/F',
+        '/Create',
         '/TN', $Script:TaskName,
-        '/TR', $trArg,
+        '/TR', $resolvedAgent,
         '/SC', 'ONLOGON',
-        '/RU', $RunAs,
-        '/IT',
         '/RL', 'HIGHEST',
-        '/NP'
+        '/F'
     )
-    $commandLine = 'schtasks.exe ' + ($argList -join ' ')
-    Write-SyncLayerInstallLog -Message "TASK CREATE CMD: $commandLine"
-    Write-SyncLayerInstallLog -Message "TASK CREATE TR: $trArg"
-    Write-SyncLayerInstallLog -Message "TASK CREATE RU: $RunAs"
-    Write-SyncLayerInstallLog -Message "TASK CREATE AGENT: $resolvedAgent"
+    Write-SyncLayerInstallLog -Message ("TASK CREATE ARGV: " + ($argList -join ' '))
+    Write-SyncLayerInstallLog -Message "TASK CREATE TR: $resolvedAgent"
 
     $output = & schtasks.exe @argList 2>&1
     $exitCode = $LASTEXITCODE
@@ -263,21 +236,28 @@ function Invoke-SchtasksCreateSyncLayerTask {
     if ($exitCode -ne 0) {
         throw "schtasks.exe failed ($exitCode): $text"
     }
+
+    $query = Invoke-SchtasksQuerySyncLayerTask
+    Write-SyncLayerInstallLog -Message "TASK QUERY EXIT: $($query.ExitCode)"
+    if ($query.Text) {
+        Write-SyncLayerInstallLog -Message "TASK QUERY OUTPUT: $($query.Text)"
+    }
+    if ($query.ExitCode -ne 0) {
+        throw "schtasks.exe query failed ($($query.ExitCode)): $($query.Text)"
+    }
 }
 
 function Assert-SyncLayerScheduledTask {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$AgentPath,
-        [Parameter(Mandatory = $true)]
-        [string]$RunAs
+        [string]$AgentPath
     )
 
     $resolvedAgent = Resolve-SyncLayerAgentPath -AgentPath $AgentPath
     $query = Invoke-SchtasksQuerySyncLayerTask
-    Write-SyncLayerInstallLog -Message "TASK QUERY EXIT: $($query.ExitCode)"
+    Write-SyncLayerInstallLog -Message "TASK ASSERT QUERY EXIT: $($query.ExitCode)"
     if ($query.Text) {
-        Write-SyncLayerInstallLog -Message "TASK QUERY OUTPUT: $($query.Text)"
+        Write-SyncLayerInstallLog -Message "TASK ASSERT QUERY OUTPUT: $($query.Text)"
     }
 
     if ($query.ExitCode -ne 0) {
@@ -294,34 +274,6 @@ function Assert-SyncLayerScheduledTask {
     }
 }
 
-function Register-SyncLayerScheduledTaskViaApi {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$AgentPath,
-        [Parameter(Mandatory = $true)]
-        [string]$RunAs,
-        [Parameter(Mandatory = $true)]
-        [string]$AgentDir
-    )
-
-    $resolvedAgent = Resolve-SyncLayerAgentPath -AgentPath $AgentPath
-    Write-SyncLayerInstallLog -Message "TASK API CREATE: agent=$resolvedAgent user=$RunAs dir=$AgentDir"
-
-    Unregister-ScheduledTask -TaskName $Script:TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-
-    $action = New-ScheduledTaskAction -Execute $resolvedAgent -WorkingDirectory $AgentDir
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $RunAs
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId $RunAs -LogonType Interactive -RunLevel Highest
-    Register-ScheduledTask `
-        -TaskName $Script:TaskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Settings $settings `
-        -Principal $principal `
-        -Force | Out-Null
-}
-
 function Register-SyncLayerScheduledTask {
     param(
         [Parameter(Mandatory = $true)]
@@ -329,29 +281,11 @@ function Register-SyncLayerScheduledTask {
     )
 
     $resolvedAgent = Resolve-SyncLayerAgentPath -AgentPath $AgentPath
-    $interactiveUser = Get-SyncLayerInteractiveUser
-    $runAccount = Get-SyncLayerTaskRunAccount -InteractiveUser $interactiveUser
-    $agentDir = Split-Path -Parent $resolvedAgent
-    $errors = @()
-
-    Write-SyncLayerInstallLog -Message "TASK REGISTER: interactiveUser=$interactiveUser runAccount=$runAccount agent=$resolvedAgent"
+    Write-SyncLayerInstallLog -Message "TASK REGISTER: agent=$resolvedAgent"
 
     Remove-SyncLayerScheduledTasks -ExtraTaskNames @()
-
-    try {
-        Invoke-SchtasksCreateSyncLayerTask -AgentPath $resolvedAgent -RunAs $runAccount
-    } catch {
-        $errors += "schtasks.exe: $($_.Exception.Message)"
-        Write-SyncLayerInstallLog -Message "TASK CREATE schtasks failed, trying Register-ScheduledTask API"
-        try {
-            Register-SyncLayerScheduledTaskViaApi -AgentPath $resolvedAgent -RunAs $runAccount -AgentDir $agentDir
-        } catch {
-            $errors += "Register-ScheduledTask: $($_.Exception.Message)"
-            throw ($errors -join '; ')
-        }
-    }
-
-    Assert-SyncLayerScheduledTask -AgentPath $resolvedAgent -RunAs $runAccount
+    Invoke-SchtasksCreateSyncLayerTask -AgentPath $resolvedAgent
+    Assert-SyncLayerScheduledTask -AgentPath $resolvedAgent
 }
 
 function Start-SyncLayerAgentOnce {
