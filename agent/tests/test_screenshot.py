@@ -179,6 +179,7 @@ def test_context_change_sets_pending_without_extra_thread(worker):
 
 def test_screenshot_loop_skips_capture_when_server_offline(worker):
     worker._running = True
+    worker._context_pending = True
     capture = MagicMock()
 
     with patch("screenshot.is_online", return_value=False), patch.object(
@@ -188,6 +189,37 @@ def test_screenshot_loop_skips_capture_when_server_offline(worker):
             worker._loop()
 
     capture.assert_not_called()
+
+
+def test_screenshot_loop_skips_capture_without_context_change(worker):
+    worker._running = True
+    capture = MagicMock()
+
+    with patch("screenshot.is_online", return_value=True), patch(
+        "screenshot.is_monitoring_active", return_value=True
+    ), patch("screenshot.screenshots_allowed", return_value=True), patch.object(
+        worker, "_capture_and_send", capture
+    ), patch("screenshot.time.sleep", side_effect=StopIteration):
+        with pytest.raises(StopIteration):
+            worker._loop()
+
+    capture.assert_not_called()
+
+
+def test_screenshot_loop_captures_on_context_pending(worker):
+    worker._running = True
+    worker._context_pending = True
+    capture = MagicMock()
+
+    with patch("screenshot.is_online", return_value=True), patch(
+        "screenshot.is_monitoring_active", return_value=True
+    ), patch("screenshot.screenshots_allowed", return_value=True), patch.object(
+        worker, "_capture_and_send", capture
+    ), patch("screenshot.time.sleep", side_effect=StopIteration):
+        with pytest.raises(StopIteration):
+            worker._loop()
+
+    capture.assert_called_once_with(trigger="context")
 
 
 def test_capture_and_send_does_not_mark_offline_on_upload_failure(worker):

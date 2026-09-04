@@ -25,7 +25,9 @@ from server_link import is_online
 logger = logging.getLogger("screenshot")
 
 HEADERS = {"X-API-Key": API_KEY}
-SCREENSHOT_INTERVAL = int(os.environ.get("SCREENSHOT_INTERVAL", "30"))
+SCREENSHOT_POLL_SEC = int(
+    os.environ.get("SCREENSHOT_POLL_SEC", os.environ.get("SCREENSHOT_INTERVAL", "2"))
+)
 SCREENSHOT_ENABLED = os.environ.get("SCREENSHOT_ENABLED", "1").strip() != "0"
 JPEG_QUALITY = int(os.environ.get("SCREENSHOT_JPEG_QUALITY", "50"))
 MAX_CAPTURE_WIDTH = int(os.environ.get("SCREENSHOT_MAX_WIDTH", "1280"))
@@ -94,7 +96,7 @@ class ScreenshotWorker:
         self._running = False
         unregister_context_listener(self._context_handler)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=SCREENSHOT_INTERVAL + 5)
+            self._thread.join(timeout=SCREENSHOT_POLL_SEC + 5)
 
     def _on_context_change(self, _process_name: str, _window_title: str) -> None:
         now = time.monotonic()
@@ -126,28 +128,29 @@ class ScreenshotWorker:
             try:
                 check_memory()
                 if not is_online() or not is_monitoring_active():
-                    time.sleep(SCREENSHOT_INTERVAL)
+                    time.sleep(SCREENSHOT_POLL_SEC)
                     continue
                 if not screenshots_allowed() or self._mss_capture_disabled:
-                    time.sleep(SCREENSHOT_INTERVAL)
+                    time.sleep(SCREENSHOT_POLL_SEC)
                     continue
 
-                trigger = "interval"
+                pending = False
                 with self._context_lock:
                     if self._context_pending:
                         self._context_pending = False
-                        trigger = "context"
+                        pending = True
 
-                self._capture_and_send(trigger=trigger)
+                if pending:
+                    self._capture_and_send(trigger="context")
             except Exception as e:
                 logger.warning("Screenshot error: %s", e)
                 log_event("screenshot_error", "screenshot", error=str(e))
             self._cycle += 1
             if self._cycle % GC_EVERY_N_CYCLES == 0:
                 gc.collect()
-            time.sleep(SCREENSHOT_INTERVAL)
+            time.sleep(SCREENSHOT_POLL_SEC)
 
-    def _capture_and_send(self, trigger: str = "interval"):
+    def _capture_and_send(self, trigger: str = "context"):
         import socket
 
         if (
