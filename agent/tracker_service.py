@@ -1,13 +1,10 @@
 """
-Windows Service для агента мониторинга.
+Windows Service для агента мониторинга (LEGACY).
 
-Запускается от имени SYSTEM — обычный пользователь не может остановить.
-При сбое автоматически перезапускается через 10 секунд.
+Не используется актуальным installer flow SyncLayer.
+Целевая схема: 1 x SyncLayerAgent.exe + Scheduled Task SyncLayerAgent.
 
-Установка:   python tracker_service.py install
-Запуск:      python tracker_service.py start
-Остановка:   python tracker_service.py stop   (только Администратор)
-Удаление:    python tracker_service.py remove  (только Администратор)
+Оставлено только для ручного обслуживания старых установок.
 """
 import sys
 import os

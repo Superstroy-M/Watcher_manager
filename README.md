@@ -10,8 +10,11 @@ WatcherManager/
 │   ├── config.py           # Настройки (URL сервера, API ключ)
 │   ├── window_tracker.py   # Отслеживание активного окна
 │   ├── sender.py           # Отправка событий на сервер
-│   ├── tray_app.py         # Иконка в системном трее
-│   ├── tracker_service.py  # Windows Service (не убить пользователю)
+│   ├── tray_app.py         # Legacy UI helper (не используется installer flow)
+│   ├── tracker_service.py  # Legacy Windows Service (не используется installer flow)
+│   ├── install_common.ps1  # Общая зачистка/verify Windows-установки
+│   ├── install_finalize.ps1
+│   ├── install_verify.ps1
 │   ├── requirements.txt
 │   └── install.bat         # Установка на ПК (запускать от Администратора)
 │
@@ -51,15 +54,31 @@ install.bat
 
 - В репозитории есть workflow `Build Windows Installer`.
 - Он собирает `SyncLayerSetup.exe` на Windows runner в GitHub Actions.
-- Установщик кладёт файлы в `C:\ProgramData\SyncLayer`, регистрирует и запускает службу `SyncLayer`, включает автозапуск после перезагрузки.
+- Установщик кладёт `SyncLayerAgent.exe` в `C:\ProgramData\SyncLayer`, создаёт одну задачу `SyncLayerAgent` (`ONLOGON`) и проверяет, что на ПК нет лишних служб/автозапусков.
 
-## Как работает защита от закрытия
+## Схема Windows-установки
 
-Агент устанавливается как **Windows Service** с учётной записью SYSTEM:
-- Обычный пользователь не может остановить сервис
-- При падении — автоматически перезапускается через 10 секунд
-- Иконка в трее показывает статус, но не управляет сервисом
-- Удалить можно только от имени Администратора через `uninstall.bat`
+На рабочем ПК после установки:
+
+- **1** процесс `SyncLayerAgent.exe`
+- **1** Scheduled Task `SyncLayerAgent`
+- **0** Windows Services
+- **0** tray helpers
+
+Проверка:
+
+```bat
+cd agent
+install_verify.bat
+```
+
+## Автозапуск и защита
+
+Актуальный installer flow использует **одну** Scheduled Task `SyncLayerAgent` при входе пользователя.
+
+- Не создаются записи `HKLM\Run` / `HKCU\Run`, если задача создана успешно
+- При переустановке удаляются legacy service/task/run entries от старых версий
+- Удалить агент можно от имени Администратора через `uninstall.bat`
 
 ## Что отслеживается
 

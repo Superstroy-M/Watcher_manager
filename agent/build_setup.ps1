@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
-Write-Host "== SyncLayer: build standalone binaries =="
+Write-Host "== SyncLayer: build SyncLayerAgent.exe =="
 
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -15,31 +15,23 @@ if (Test-Path "build") {
     Remove-Item -Recurse -Force "build"
 }
 
+$iconArgs = @()
+if (Test-Path "icon.png") {
+    $iconArgs = @("--icon", "icon.png", "--add-data", "icon.png;.")
+}
+
 python -m PyInstaller `
   --noconfirm `
   --clean `
   --noconsole `
   --onefile `
   --name SyncLayerAgent `
-  --icon icon.png `
-  --add-data "icon.png;." `
+  @iconArgs `
   app_main.py `
-  --distpath dist
-
-python -m PyInstaller `
-  --noconfirm `
-  --clean `
-  --onefile `
-  --name SyncLayerService `
-  --hidden-import=win32timezone `
-  tracker_service.py `
   --distpath dist
 
 if (!(Test-Path "dist/SyncLayerAgent.exe")) {
     throw "SyncLayerAgent.exe was not built"
-}
-if (!(Test-Path "dist/SyncLayerService.exe")) {
-    throw "SyncLayerService.exe was not built"
 }
 
 Write-Host "== SyncLayer: build installer =="

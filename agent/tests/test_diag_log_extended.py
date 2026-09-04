@@ -13,8 +13,9 @@ def setup_function():
 def test_log_event_rotation(tmp_path, monkeypatch):
     trace = tmp_path / "activity_trace.jsonl"
     monkeypatch.setattr(diag_log, "TRACE_FILE", trace)
-    monkeypatch.setattr(diag_log, "DIAG_MAX_BYTES", 200)
-    monkeypatch.setattr(diag_log, "DIAG_KEEP_ROTATED", 2)
+    monkeypatch.setattr(diag_log, "TRACE_MAX_BYTES", 200)
+    monkeypatch.setattr(diag_log, "TRACE_KEEP_ROTATED", 2)
+    monkeypatch.setattr(diag_log, "DEBUG_MODE", True)
 
     for i in range(30):
         diag_log.log_event("test", "unit", idx=i, payload="x" * 20)

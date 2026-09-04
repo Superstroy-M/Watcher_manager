@@ -1,26 +1,2 @@
-@echo off
-:: Массовая установка по списку ПК (общая папка или USB уже скопированы на шару).
-:: Запускать с вашего компьютера, где есть права Администратора на целевые ПК.
-::
-:: 1. Положите папку agent на шару, например \\СЕРВЕР\soft\SyncLayer
-:: 2. Ниже пропишите UNC путь и имена ПК
-:: 3. Запустите этот файл от Администратора
-
 set SHARE=\\СЕРВЕР\soft\SyncLayer
-set INSTALLER=%SHARE%\УСТАНОВИТЬ.bat
-
-echo ПК, на которые ставим (отредактируйте список в этом файле):
-echo.
-
-for %%C in (
-    PC01
-    PC02
-    PC03
-) do (
-    echo --- %%C ---
-    psexec \\%%C -s -h -accepteula cmd /c "%INSTALLER% /silent"
-    echo.
-)
-
-echo Готово.
-pause
+set INSTALLER=%SHARE%\install.bat

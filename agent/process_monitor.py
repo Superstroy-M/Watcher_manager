@@ -12,6 +12,7 @@ from typing import Optional
 import psutil
 
 from config import SERVER_URL, API_KEY
+from diag_log import log_event
 from http_client import post
 from monitoring_control import is_monitoring_active
 from server_link import is_online, mark_offline
@@ -46,29 +47,30 @@ class ProcessMonitor:
     def _snapshot(self):
         if not is_online() or not is_monitoring_active():
             return
+        log_event("process_cycle_start", "processes")
         procs = []
-        for p in psutil.process_iter(["name", "pid", "cpu_percent", "memory_info", "username"]):
-            try:
-                info = p.info
-                procs.append({
-                    "name": info["name"] or "unknown",
-                    "pid": info["pid"],
-                    "cpu": round(info["cpu_percent"] or 0, 1),
-                    "mem_mb": round((info["memory_info"].rss if info["memory_info"] else 0) / 1024 / 1024, 1),
-                    "user": info["username"] or "",
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        if len(procs) > MAX_PROCESSES_PER_SNAPSHOT:
-            procs = procs[:MAX_PROCESSES_PER_SNAPSHOT]
-
-        payload = {
-            "hostname": socket.gethostname(),
-            "captured_at": datetime.utcnow().isoformat(),
-            "processes": procs,
-        }
         try:
+            for p in psutil.process_iter(["name", "pid", "cpu_percent", "memory_info", "username"]):
+                try:
+                    info = p.info
+                    procs.append({
+                        "name": info["name"] or "unknown",
+                        "pid": info["pid"],
+                        "cpu": round(info["cpu_percent"] or 0, 1),
+                        "mem_mb": round((info["memory_info"].rss if info["memory_info"] else 0) / 1024 / 1024, 1),
+                        "user": info["username"] or "",
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            if len(procs) > MAX_PROCESSES_PER_SNAPSHOT:
+                procs = procs[:MAX_PROCESSES_PER_SNAPSHOT]
+
+            payload = {
+                "hostname": socket.gethostname(),
+                "captured_at": datetime.utcnow().isoformat(),
+                "processes": procs,
+            }
             resp = post(
                 f"{SERVER_URL}/api/processes",
                 json=payload,
@@ -77,6 +79,8 @@ class ProcessMonitor:
             )
             resp.raise_for_status()
             logger.debug(f"Sent {len(procs)} processes")
+            log_event("process_cycle_end", "processes", count=len(procs))
         except Exception as e:
             mark_offline(str(e))
             logger.warning(f"Process snapshot send failed: {e}")
+            log_event("process_cycle_error", "processes", error=str(e))

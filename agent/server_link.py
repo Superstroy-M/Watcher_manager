@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import SERVER_URL, API_KEY
+from diag_log import log_event
 from http_client import PROBE_TIMEOUT, get
 
 logger = logging.getLogger("server_link")
@@ -59,8 +60,10 @@ def offline_reason() -> Optional[str]:
 def mark_online() -> None:
     global _online, _offline_reason, _offline_announced, _next_probe_at
     with _lock:
-        if not _online:
+        was_offline = not _online
+        if was_offline:
             logger.warning("Server is back online")
+            log_event("server_online", "server_link")
         _online = True
         _offline_reason = None
         _offline_announced = False
@@ -79,6 +82,11 @@ def mark_offline(reason: str = "") -> None:
             logger.error(
                 "Server unreachable — all uploads paused (no buffering): %s",
                 _offline_reason or "unknown",
+            )
+            log_event(
+                "server_offline",
+                "server_link",
+                reason=_offline_reason or "unknown",
             )
             _offline_announced = True
             purge = True

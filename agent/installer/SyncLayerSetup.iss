@@ -21,21 +21,13 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
 Source: "..\dist\SyncLayerAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\SyncLayerService.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-[Registry]
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SyncLayerAgent"; ValueData: """{app}\SyncLayerAgent.exe"""; Flags: uninsdeletevalue
+Source: "..\install_common.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\install_finalize.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\install_verify.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "{cmd}"; Parameters: "/C sc stop SyncLayer"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc delete SyncLayer"; Flags: runhidden waituntilterminated
-Filename: "{app}\SyncLayerService.exe"; Parameters: "install"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc config SyncLayer start= auto"; Flags: runhidden waituntilterminated
-Filename: "{app}\SyncLayerService.exe"; Parameters: "start"; Flags: runhidden waituntilterminated
-Filename: "{app}\SyncLayerAgent.exe"; Flags: nowait postinstall skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_finalize.ps1"" -AgentPath ""{app}\SyncLayerAgent.exe"" -AgentDir ""{app}"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_verify.ps1"""; Flags: runhidden waituntilterminated
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN SyncLayerAgent /F"; Flags: runhidden waituntilterminated
-Filename: "{app}\SyncLayerService.exe"; Parameters: "stop"; Flags: runhidden waituntilterminated
-Filename: "{app}\SyncLayerService.exe"; Parameters: "remove"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc delete SyncLayer"; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command "". '{app}\install_common.ps1'; Remove-LegacySyncLayerInstall -AgentDir '{app}' -StopProcesses"""; Flags: runhidden waituntilterminated

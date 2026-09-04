@@ -17,7 +17,7 @@ import psutil
 import ctypes
 
 from config import POLL_INTERVAL, IDLE_THRESHOLD
-from diag_log import log_event, truncate_text
+from diag_log import log_event
 from monitoring_control import is_monitoring_active
 from server_link import is_online
 
@@ -181,7 +181,6 @@ class WindowTracker:
             "activity_segment",
             "tracker",
             process_name=self._current_process or event["process_name"],
-            window_title=truncate_text(event.get("window_title", "")),
             duration_seconds=duration,
             segment_type=event["event_type"],
         )

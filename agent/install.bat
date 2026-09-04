@@ -10,7 +10,7 @@ echo.
 net session >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Run as Administrator
-    echo Right click INSTALL.bat - Run as administrator
+    echo Right click install.bat - Run as administrator
     echo.
     pause
     exit /b 1
@@ -18,16 +18,16 @@ if errorlevel 1 (
 
 set "SRC=%~dp0"
 set "DEST=%ProgramFiles%\SyncLayer"
+set "AGENT=%DEST%\SyncLayerAgent.exe"
 set "PY_DIR=%ProgramFiles%\Python312"
 set "PY=%PY_DIR%\python.exe"
-set "PYW=%PY_DIR%\pythonw.exe"
 set "PY_SETUP=%TEMP%\python-3.12.10-amd64.exe"
 set "LOG=%TEMP%\synclayer-install.log"
 
 echo Log: %LOG%
 echo. > "%LOG%"
 
-echo [1/6] Copy files to "%DEST%"
+echo [1/7] Copy files to "%DEST%"
 if not exist "%DEST%" mkdir "%DEST%"
 xcopy /E /Y /Q /I "%SRC%*" "%DEST%\" >> "%LOG%" 2>&1
 if errorlevel 1 (
@@ -36,7 +36,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [2/6] Python
+echo [2/7] Python
 if exist "%PY%" goto HAVE_PY
 where python >nul 2>&1
 if not errorlevel 1 (
@@ -64,9 +64,8 @@ if not exist "%PY%" (
 
 :HAVE_PY
 echo Using: %PY%
-if not exist "%PYW%" set "PYW=%PY%"
 
-echo [3/6] pip packages
+echo [3/7] pip packages
 "%PY%" -m pip install --upgrade pip >> "%LOG%" 2>&1
 "%PY%" -m pip install -r "%DEST%\requirements.txt" >> "%LOG%" 2>&1
 if errorlevel 1 (
@@ -77,29 +76,37 @@ if errorlevel 1 (
 )
 "%PY%" -m pywin32_postinstall -install >> "%LOG%" 2>&1
 
-echo [4/6] Disable old service mode (if exists)
+echo [4/7] Build SyncLayerAgent.exe
 cd /d "%DEST%"
-"%PY%" tracker_service.py stop >> "%LOG%" 2>&1
-"%PY%" tracker_service.py remove >> "%LOG%" 2>&1
-sc stop SyncLayer >> "%LOG%" 2>&1
-sc delete SyncLayer >> "%LOG%" 2>&1
-
-echo [5/6] Create startup task (user session)
-schtasks /Delete /TN "SyncLayerAgent" /F >nul 2>&1
-schtasks /Create /F /TN "SyncLayerAgent" /TR "\"%PYW%\" \"%DEST%\app_main.py\"" /SC ONLOGON /RL HIGHEST /IT >> "%LOG%" 2>&1
-if errorlevel 1 (
-    echo ERROR: cannot create SyncLayerAgent task. See %LOG%
+"%PY%" -m pip install pyinstaller >> "%LOG%" 2>&1
+set "ICON_ARG="
+if exist "%DEST%\icon.png" set "ICON_ARG=--icon icon.png --add-data icon.png;."
+"%PY%" -m PyInstaller --noconfirm --clean --noconsole --onefile --name SyncLayerAgent %ICON_ARG% --distpath "%DEST%" --workpath "%TEMP%\synclayer-build" --specpath "%TEMP%\synclayer-build" app_main.py >> "%LOG%" 2>&1
+if not exist "%AGENT%" (
+    echo ERROR: SyncLayerAgent.exe build failed. See %LOG%
     pause
     exit /b 1
 )
 
-echo [5.1/6] Create autostart for any logged user
-reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "SyncLayerAgent" /t REG_SZ /d "\"%PYW%\" \"%DEST%\app_main.py\"" /f >> "%LOG%" 2>&1
+echo [5/7] Remove legacy service/task/run entries
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST%\install_finalize.ps1" -AgentPath "%AGENT%" -AgentDir "%DEST%" -CleanupOnly >> "%LOG%" 2>&1
 
-echo [6/6] Start agent now
-schtasks /Run /TN "SyncLayerAgent" >> "%LOG%" 2>&1
+echo [6/7] Register SyncLayerAgent task and start agent
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST%\install_finalize.ps1" -AgentPath "%AGENT%" -AgentDir "%DEST%" >> "%LOG%" 2>&1
 if errorlevel 1 (
-    start "" "%PYW%" "%DEST%\app_main.py"
+    echo ERROR: install finalize failed. See %LOG%
+    type "%LOG%"
+    pause
+    exit /b 1
+)
+
+echo [7/7] Verify install layout
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST%\install_verify.ps1" >> "%LOG%" 2>&1
+if errorlevel 1 (
+    echo ERROR: install verification failed. See %LOG%
+    type "%LOG%"
+    pause
+    exit /b 1
 )
 
 attrib +h "%DEST%" >nul 2>&1
@@ -107,8 +114,9 @@ attrib +h "%DEST%" >nul 2>&1
 echo.
 echo ============================================
 echo  OK. SyncLayer installed.
+echo  Process : 1 x SyncLayerAgent.exe
+echo  Autostart: task SyncLayerAgent on user logon
 echo  Dashboard: http://201.51.8.127:8000
-echo  Autostart: task SyncLayerAgent on user logon.
 echo  Wait 1-2 minutes then refresh the page.
 echo ============================================
 echo.

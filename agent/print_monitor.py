@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from config import SERVER_URL, API_KEY
+from diag_log import log_event
 from http_client import post
 from monitoring_control import is_monitoring_active
 from server_link import is_online, mark_offline
@@ -106,6 +107,7 @@ class PrintMonitor:
     def _send_job(self, document: str, printer: str, pages: int, username: str):
         if not is_online() or not is_monitoring_active():
             return
+        log_event("print_cycle_start", "print", pages=pages or 0)
         payload = {
             "hostname": socket.gethostname(),
             "printed_at": datetime.utcnow().isoformat(),
@@ -122,7 +124,9 @@ class PrintMonitor:
                 timeout=10,
             )
             resp.raise_for_status()
-            logger.info(f"Print job sent: {document} ({pages} стр.) → {printer}")
+            logger.info(f"Print job sent ({pages} pages) -> {printer}")
+            log_event("print_cycle_end", "print", pages=pages or 0)
         except Exception as e:
             mark_offline(str(e))
             logger.warning(f"Print job send failed: {e}")
+            log_event("print_cycle_error", "print", error=str(e))

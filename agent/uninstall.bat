@@ -1,34 +1,48 @@
 @echo off
-:: Удаление агента WatcherManager
+:: Удаление SyncLayer агента
 :: ЗАПУСКАТЬ ОТ ИМЕНИ АДМИНИСТРАТОРА
 
 echo ============================================
-echo  WatcherManager Agent Uninstaller
+echo  SyncLayer Uninstaller
 echo ============================================
 echo.
 
 net session >nul 2>&1
-if %errorLevel% NEQ 0 (
-    echo ОШИБКА: Запустите скрипт от имени Администратора!
+if errorlevel 1 (
+    echo ERROR: Run as Administrator
     pause
     exit /b 1
 )
 
-set AGENT_DIR=%~dp0
-set PYTHON=python
+set "AGENT_DIR=%ProgramFiles%\SyncLayer"
+if exist "%~dp0install_common.ps1" (
+    set "COMMON=%~dp0install_common.ps1"
+) else if exist "%AGENT_DIR%\install_common.ps1" (
+    set "COMMON=%AGENT_DIR%\install_common.ps1"
+) else (
+    echo ERROR: install_common.ps1 not found
+    pause
+    exit /b 1
+)
 
-echo [1/3] Остановка сервиса...
-%PYTHON% "%AGENT_DIR%tracker_service.py" stop 2>nul
-timeout /t 2 /nobreak >nul
+echo [1/2] Stop agent, remove service/tasks/run keys...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  ". '%COMMON%'; Remove-LegacySyncLayerInstall -AgentDir '%AGENT_DIR%' -StopProcesses"
+if errorlevel 1 (
+    echo ERROR: cleanup failed
+    pause
+    exit /b 1
+)
 
-echo [2/3] Удаление сервиса...
-%PYTHON% "%AGENT_DIR%tracker_service.py" remove
-
-echo [3/3] Удаление задач планировщика...
-schtasks /Delete /TN "SyncLayerAgent" /F >nul 2>&1
-schtasks /Delete /TN "SyncLayerTray" /F >nul 2>&1
-reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "SyncLayerAgent" /f >nul 2>&1
+echo [2/2] Verify cleanup...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  ". '%COMMON%'; $r = Test-SyncLayerInstall -ExpectedProcessCount 0 -RequireScheduledTask $false; Write-SyncLayerInstallReport -Result $r; if (-not $r.Ok) { exit 1 }"
+if errorlevel 1 (
+    echo WARNING: some legacy entries may remain. Check report above.
+    pause
+    exit /b 1
+)
 
 echo.
-echo Агент удалён.
+echo SyncLayer agent removed.
 pause

@@ -58,53 +58,55 @@ class NetworkMonitor:
     def _snapshot(self):
         if not is_online() or not is_monitoring_active():
             return
+        log_event("network_cycle_start", "network")
         pid_to_name = {p.pid: p.name() for p in psutil.process_iter(["name", "pid"])}
         connections = []
 
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.status != "ESTABLISHED":
-                continue
-            if not conn.raddr:
-                continue
-            remote_ip = conn.raddr.ip
-            if not _is_external(remote_ip):
-                continue
-
-            proc_name = pid_to_name.get(conn.pid, "unknown") if conn.pid else "unknown"
-            connections.append({
-                "process_name": proc_name,
-                "pid": conn.pid or 0,
-                "remote_ip": remote_ip,
-                "remote_port": conn.raddr.port,
-                "local_port": conn.laddr.port if conn.laddr else 0,
-                "status": conn.status,
-            })
-
-        if not connections:
-            return
-
-        total_found = len(connections)
-        if total_found > MAX_CONNECTIONS:
-            connections = connections[:MAX_CONNECTIONS]
-            logger.warning(
-                "Network snapshot truncated: %d connections found, sending %d",
-                total_found,
-                MAX_CONNECTIONS,
-            )
-            log_event(
-                "network_truncated",
-                "network",
-                total_found=total_found,
-                sent_count=MAX_CONNECTIONS,
-                max_connections=MAX_CONNECTIONS,
-            )
-
-        payload = {
-            "hostname": socket.gethostname(),
-            "captured_at": datetime.utcnow().isoformat(),
-            "connections": connections,
-        }
         try:
+            for conn in psutil.net_connections(kind="inet"):
+                if conn.status != "ESTABLISHED":
+                    continue
+                if not conn.raddr:
+                    continue
+                remote_ip = conn.raddr.ip
+                if not _is_external(remote_ip):
+                    continue
+
+                proc_name = pid_to_name.get(conn.pid, "unknown") if conn.pid else "unknown"
+                connections.append({
+                    "process_name": proc_name,
+                    "pid": conn.pid or 0,
+                    "remote_ip": remote_ip,
+                    "remote_port": conn.raddr.port,
+                    "local_port": conn.laddr.port if conn.laddr else 0,
+                    "status": conn.status,
+                })
+
+            if not connections:
+                log_event("network_cycle_end", "network", count=0)
+                return
+
+            total_found = len(connections)
+            if total_found > MAX_CONNECTIONS:
+                connections = connections[:MAX_CONNECTIONS]
+                logger.warning(
+                    "Network snapshot truncated: %d connections found, sending %d",
+                    total_found,
+                    MAX_CONNECTIONS,
+                )
+                log_event(
+                    "network_truncated",
+                    "network",
+                    total_found=total_found,
+                    sent_count=MAX_CONNECTIONS,
+                    max_connections=MAX_CONNECTIONS,
+                )
+
+            payload = {
+                "hostname": socket.gethostname(),
+                "captured_at": datetime.utcnow().isoformat(),
+                "connections": connections,
+            }
             resp = post(
                 f"{SERVER_URL}/api/network",
                 json=payload,
@@ -113,6 +115,8 @@ class NetworkMonitor:
             )
             resp.raise_for_status()
             logger.debug(f"Sent {len(connections)} network connections")
+            log_event("network_cycle_end", "network", count=len(connections))
         except Exception as e:
             mark_offline(str(e))
             logger.warning(f"Network snapshot send failed: {e}")
+            log_event("network_cycle_error", "network", error=str(e))

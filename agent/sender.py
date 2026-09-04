@@ -83,14 +83,24 @@ class EventSender:
             "screenshots_enabled": screenshots_allowed(),
             "monitoring_state": get_state(),
         }
-        resp = post(
-            f"{SERVER_URL}/api/heartbeat",
-            json=payload,
-            headers=HEADERS,
-        )
-        resp.raise_for_status()
-        apply_server_state(resp.json().get("monitoring_state", "active"))
-        log_event("heartbeat_ok", "sender", ip_address=payload.get("ip_address"))
+        try:
+            resp = post(
+                f"{SERVER_URL}/api/heartbeat",
+                json=payload,
+                headers=HEADERS,
+            )
+            resp.raise_for_status()
+            apply_server_state(resp.json().get("monitoring_state", "active"))
+            log_event(
+                "heartbeat_ok",
+                "sender",
+                ip_address=payload.get("ip_address"),
+                monitoring_state=get_state(),
+                ram_mb=payload.get("ram_mb"),
+            )
+        except Exception as e:
+            log_event("heartbeat_fail", "sender", error=str(e))
+            raise
 
     def _send_events(self):
         import socket

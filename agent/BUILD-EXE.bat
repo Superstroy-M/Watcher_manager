@@ -19,7 +19,7 @@ if errorlevel 1 (
     if exist "%ProgramFiles%\Python312\python.exe" (
         set "PY=%ProgramFiles%\Python312\python.exe"
     ) else (
-        echo Python not found. Finish INSTALL.bat first.
+        echo Python not found. Finish install.bat first.
         pause
         exit /b 1
     )
@@ -28,17 +28,21 @@ if errorlevel 1 (
 )
 
 "%PY%" -m pip install pyinstaller -r requirements.txt
-"%PY%" -m PyInstaller --noconfirm --clean --noconsole --onefile --name SyncLayer --icon icon.png --add-data "icon.png;." app_main.py
 
-if not exist "%cd%\dist\SyncLayer.exe" (
-    echo ERROR: build failed, dist\SyncLayer.exe not found
+set "ICON_ARG="
+if exist "%cd%\icon.png" set "ICON_ARG=--icon icon.png --add-data icon.png;."
+
+"%PY%" -m PyInstaller --noconfirm --clean --noconsole --onefile --name SyncLayerAgent %ICON_ARG% app_main.py
+
+if not exist "%cd%\dist\SyncLayerAgent.exe" (
+    echo ERROR: build failed, dist\SyncLayerAgent.exe not found
     pause
     exit /b 1
 )
 
 set "STATIC_DIR=%~dp0..\server\static"
-set "STATIC_EXE=%STATIC_DIR%\SyncLayer.exe"
-set "DOWNLOAD_URL=http://201.51.8.127:8000/static/SyncLayer.exe"
+set "STATIC_EXE=%STATIC_DIR%\SyncLayerAgent.exe"
+set "DOWNLOAD_URL=http://201.51.8.127:8000/static/SyncLayerAgent.exe"
 
 if not exist "%STATIC_DIR%" (
     echo ERROR: server\static folder not found:
@@ -49,7 +53,7 @@ if not exist "%STATIC_DIR%" (
 
 echo.
 echo Publishing to server\static ...
-copy /Y "%cd%\dist\SyncLayer.exe" "%STATIC_EXE%" >nul
+copy /Y "%cd%\dist\SyncLayerAgent.exe" "%STATIC_EXE%" >nul
 if errorlevel 1 (
     echo ERROR: cannot copy exe to server\static
     pause
@@ -69,7 +73,7 @@ if errorlevel 1 (
 
 echo.
 echo OK. Ready for install.
-echo Build:  %cd%\dist\SyncLayer.exe
+echo Build:  %cd%\dist\SyncLayerAgent.exe
 echo Public: %STATIC_EXE%
 echo URL:    %DOWNLOAD_URL%
 echo.
