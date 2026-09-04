@@ -49,7 +49,7 @@ function Build-SyncLayerSetup {
     Write-Host "== SyncLayer: build SyncLayerSetup.exe =="
 
     if (!(Test-Path "dist/SyncLayerAgent.exe")) {
-        throw "SyncLayerAgent.exe not found — run agent build first"
+        throw "SyncLayerAgent.exe not found - run agent build first"
     }
 
     $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
