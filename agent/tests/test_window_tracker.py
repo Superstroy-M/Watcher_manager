@@ -30,12 +30,10 @@ def test_window_change_creates_event():
     tracker._current_title = "Book1"
     tracker._current_started = datetime.utcnow() - timedelta(seconds=10)
 
-    with patch("window_tracker.is_online", return_value=True), patch(
-        "window_tracker.get_idle_seconds", return_value=0
-    ), patch(
+    with patch("window_tracker.get_idle_seconds", return_value=0), patch(
         "window_tracker.get_active_window_info",
         return_value={"process_name": "word.exe", "window_title": "Doc"},
-    ), patch("window_tracker.log_event"):
+    ), patch("window_tracker.log_event"), patch("window_tracker.notify_context_change"):
         tracker._tick()
 
     events = tracker.pop_events()
@@ -52,9 +50,9 @@ def test_idle_transition_creates_idle_event():
     tracker._current_started = datetime.utcnow() - timedelta(seconds=60)
     tracker._is_idle = False
 
-    with patch("window_tracker.is_online", return_value=True), patch(
-        "window_tracker.get_idle_seconds", return_value=9999
-    ), patch("window_tracker.log_event"):
+    with patch("window_tracker.get_idle_seconds", return_value=9999), patch(
+        "window_tracker.log_event"
+    ):
         tracker._tick()
 
     events = tracker.pop_events()
@@ -80,14 +78,26 @@ def test_force_checkpoint_splits_long_session():
     assert tracker._current_started is not None
 
 
-def test_tick_skipped_when_server_offline():
+def test_tick_runs_when_server_offline():
+    """Offline не блокирует локальный сбор сессий (отправка отбрасывается sender-ом)."""
     monitoring_control.reset_for_tests("active")
     tracker = WindowTracker()
-    with patch("window_tracker.is_online", return_value=False), patch(
-        "window_tracker.get_idle_seconds", return_value=0
-    ), patch("window_tracker.get_active_window_info") as info_mock:
+    tracker._current_process = "excel.exe"
+    tracker._current_title = "Book1"
+    tracker._current_started = datetime.utcnow() - timedelta(seconds=10)
+
+    with patch("window_tracker.get_idle_seconds", return_value=0), patch(
+        "window_tracker.get_active_window_info",
+        return_value={"process_name": "word.exe", "window_title": "Doc"},
+    ), patch("window_tracker.log_event"), patch(
+        "window_tracker.notify_context_change"
+    ):
         tracker._tick()
-    info_mock.assert_not_called()
+
+    events = tracker.pop_events()
+    assert len(events) == 1
+    assert events[0]["process_name"] == "excel.exe"
+    assert "mouse_clicks" in events[0]
 
 
 def test_pending_events_capped(monkeypatch):

@@ -27,6 +27,37 @@ def init_db():
     )
     Base.metadata.create_all(bind=engine)
     _ensure_computer_columns()
+    _ensure_event_columns()
+
+
+def _telemetry_value(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _ensure_event_columns():
+    """Добавляет telemetry-поля в events на существующих БД без Alembic."""
+    from sqlalchemy import inspect, text
+
+    columns = {
+        "mouse_clicks": "INTEGER DEFAULT 0",
+        "key_activity": "INTEGER DEFAULT 0",
+        "scroll_events": "INTEGER DEFAULT 0",
+        "idle_seconds": "INTEGER DEFAULT 0",
+    }
+    try:
+        insp = inspect(engine)
+        if "events" not in insp.get_table_names():
+            return
+        existing = {c["name"] for c in insp.get_columns("events")}
+        for name, ddl in columns.items():
+            if name not in existing:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE events ADD COLUMN {name} {ddl}"))
+    except Exception:
+        pass
 
 
 def _ensure_computer_columns():

@@ -170,14 +170,14 @@
                 <th class="py-2 pr-4 font-medium">Время</th>
                 <th class="py-2 pr-4 font-medium">Приложение</th>
                 <th class="py-2 pr-4 font-medium">Заголовок окна</th>
-                <th class="py-2 font-medium">Длительность</th>
+                <th class="py-2 font-medium">Активность</th>
               </tr>
             </thead>
             <tbody>
               {% for event in events %}
               <tr class="border-t border-slate-700 hover:bg-slate-800 {% if event.event_type == 'idle' %}opacity-50{% endif %}">
                 <td class="py-2 pr-4 text-slate-300 whitespace-nowrap">
-                  {{ (event.started_at|local_dt).strftime('%H:%M:%S') }}
+                  {{ (event.started_at|local_dt).strftime('%H:%M') }}–{{ (event.ended_at|local_dt).strftime('%H:%M') if event.ended_at else '—' }}
                 </td>
                 <td class="py-2 pr-4">
                   <span class="
@@ -191,11 +191,15 @@
                 <td class="py-2 pr-4 text-slate-400 max-w-xs truncate" title="{{ event.window_title }}">
                   {{ event.window_title or '—' }}
                 </td>
-                <td class="py-2 text-slate-300 whitespace-nowrap">
-                  {% if event.duration_seconds >= 60 %}
-                    {{ event.duration_seconds // 60 }}м {{ event.duration_seconds % 60 }}с
+                <td class="py-2 text-slate-400 text-xs whitespace-nowrap">
+                  {% if event.event_type != 'idle' %}
+                  <div>Active: {% if event.duration_seconds >= 60 %}{{ event.duration_seconds // 60 }}m{{ event.duration_seconds % 60 }}s{% else %}{{ event.duration_seconds }}s{% endif %}</div>
+                  {% if event.mouse_clicks %}<div>Clicks: {{ event.mouse_clicks }}</div>{% endif %}
+                  {% if event.key_activity %}<div>Keyboard activity: {{ event.key_activity }}</div>{% endif %}
+                  {% if event.scroll_events %}<div>Scroll: {{ event.scroll_events }}</div>{% endif %}
+                  {% if event.idle_seconds %}<div>Idle: {% if event.idle_seconds >= 60 %}{{ event.idle_seconds // 60 }}m{{ event.idle_seconds % 60 }}s{% else %}{{ event.idle_seconds }}s{% endif %}</div>{% endif %}
                   {% else %}
-                    {{ event.duration_seconds }}с
+                  {% if event.duration_seconds >= 60 %}{{ event.duration_seconds // 60 }}м {{ event.duration_seconds % 60 }}с{% else %}{{ event.duration_seconds }}с{% endif %}
                   {% endif %}
                 </td>
               </tr>
@@ -327,6 +331,10 @@ const events = [
     started_at: "{{ (e.started_at|local_dt).strftime('%H:%M:%S') }}",
     started_ts: {{ (e.started_at|local_dt).hour * 3600 + (e.started_at|local_dt).minute * 60 + (e.started_at|local_dt).second }},
     duration: {{ e.duration_seconds }},
+    mouse_clicks: {{ e.mouse_clicks or 0 }},
+    key_activity: {{ e.key_activity or 0 }},
+    scroll_events: {{ e.scroll_events or 0 }},
+    idle_seconds: {{ e.idle_seconds or 0 }},
     process: {{ e.process_name | tojson }},
     title: {{ (e.window_title or '') | tojson }},
     type: "{{ e.event_type }}",
@@ -376,6 +384,10 @@ function buildTimeline() {
         data-title="${e.title.replace(/"/g,'&quot;')}"
         data-time="${e.started_at}"
         data-dur="${e.duration}"
+        data-clicks="${e.mouse_clicks || 0}"
+        data-keys="${e.key_activity || 0}"
+        data-scroll="${e.scroll_events || 0}"
+        data-idle="${e.idle_seconds || 0}"
         onmouseenter="showTip(event,this)"
         onmouseleave="hideTip()"
       ></div>`;
@@ -389,10 +401,20 @@ const tooltip = document.getElementById('tooltip');
 function showTip(ev, el) {
   const dur = parseInt(el.dataset.dur);
   const m = Math.floor(dur/60), s = dur%60;
+  const clicks = parseInt(el.dataset.clicks || '0');
+  const keys = parseInt(el.dataset.keys || '0');
+  const scroll = parseInt(el.dataset.scroll || '0');
+  const idle = parseInt(el.dataset.idle || '0');
+  let activity = `<div class="text-slate-500 mt-1">Active: ${m > 0 ? m+'m ' : ''}${s}s</div>`;
+  if (clicks) activity += `<div class="text-slate-500">Clicks: ${clicks}</div>`;
+  if (keys) activity += `<div class="text-slate-500">Keyboard activity: ${keys}</div>`;
+  if (scroll) activity += `<div class="text-slate-500">Scroll: ${scroll}</div>`;
+  if (idle) activity += `<div class="text-slate-500">Idle: ${idle}s</div>`;
   tooltip.innerHTML = `
     <div class="font-semibold text-indigo-300">${el.dataset.process}</div>
     <div class="text-slate-300 mt-1 break-words">${el.dataset.title || '—'}</div>
-    <div class="text-slate-500 mt-1">${el.dataset.time} · ${m > 0 ? m+'м ' : ''}${s}с</div>
+    <div class="text-slate-500 mt-1">${el.dataset.time}</div>
+    ${activity}
   `;
   tooltip.style.display = 'block';
   moveTip(ev);

@@ -44,6 +44,10 @@ class Event(Base):
     process_name = Column(String(255), index=True)
     window_title = Column(Text)
     event_type = Column(String(50), default="focus")  # focus | idle | login | logout
+    mouse_clicks = Column(Integer, default=0)
+    key_activity = Column(Integer, default=0)
+    scroll_events = Column(Integer, default=0)
+    idle_seconds = Column(Integer, default=0)
 
     computer = relationship("Computer", back_populates="events")
 

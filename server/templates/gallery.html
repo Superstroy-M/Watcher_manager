@@ -323,7 +323,17 @@ function applyFilters() {
   document.getElementById('session-count').textContent = `${filtered.length} сессий`;
 }
 
-// ── Сессии ────────────────────────────────────────────────────────────────────
+function fmtTelemetry(sess) {
+  if (sess.app === 'idle') return '';
+  const parts = [];
+  parts.push(`Active: ${fmtDur(sess.duration_seconds || 0)}`);
+  if ((sess.mouse_clicks || 0) > 0) parts.push(`Clicks: ${sess.mouse_clicks}`);
+  if ((sess.key_activity || 0) > 0) parts.push(`Keyboard activity: ${sess.key_activity}`);
+  if ((sess.scroll_events || 0) > 0) parts.push(`Scroll: ${sess.scroll_events}`);
+  if ((sess.idle_seconds || 0) > 0) parts.push(`Idle: ${fmtDur(sess.idle_seconds)}`);
+  return parts.map(p => `<div class="text-xs text-slate-500">${p}</div>`).join('');
+}
+
 function renderSessions(sessions) {
   const list = document.getElementById('sessions-list');
   const empty = document.getElementById('sessions-empty');
@@ -377,6 +387,7 @@ function renderSessions(sessions) {
             <span class="text-xs px-2 py-0.5 rounded-full" style="background:${color}22;color:${color};border:1px solid ${color}44">${prodRu}</span>
           </div>
           <div class="text-slate-400 text-sm mt-1 truncate" title="${sess.window_title||''}">${sess.window_title||''}</div>
+          <div class="mt-1">${fmtTelemetry(sess)}</div>
           ${shotsHtml}
         </div>
         <div class="text-right flex-shrink-0">

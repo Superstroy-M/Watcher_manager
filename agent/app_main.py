@@ -20,6 +20,7 @@ from network_monitor import NetworkMonitor
 from print_monitor import PrintMonitor
 from diag_log import get_agent_dir, is_debug_mode, log_event, log_exception, log_memory_sample
 from config import AGENT_VERSION, SERVER_URL
+from input_counter import get_input_counter
 from memory_guard import check_memory
 
 SHOW_TRAY = os.environ.get("SYNC_SHOW_TRAY", "0").strip() == "1"
@@ -88,6 +89,7 @@ def main():
     processes.start()
     network.start()
     printer.start()
+    get_input_counter().sync_monitoring_state()
 
     if SHOW_TRAY:
         from tray_app import TrayApp
@@ -96,6 +98,7 @@ def main():
     else:
         while True:
             check_memory()
+            get_input_counter().sync_monitoring_state()
             log_memory_sample("app")
             time.sleep(60)
 

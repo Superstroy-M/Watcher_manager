@@ -72,7 +72,12 @@ def test_network_connections_truncated_at_max(monkeypatch):
     payload = post_mock.call_args.kwargs["json"]
     assert len(payload["connections"]) == 3
     log_mock.assert_called()
-    assert log_mock.call_args.kwargs["total_found"] == 10
+    truncated_calls = [
+        c for c in log_mock.call_args_list
+        if c.kwargs.get("total_found") is not None
+    ]
+    assert truncated_calls
+    assert truncated_calls[0].kwargs["total_found"] == 10
 
 
 def test_screenshot_exception_1000_cycles_no_lock_leak():

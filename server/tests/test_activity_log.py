@@ -403,6 +403,44 @@ class TestSaveTimeline:
         assert content[0]["app"] == "excel.exe"
         assert content[0]["duration_seconds"] == 600
 
+    def test_merge_sums_telemetry_counters(self):
+        from activity_log import _save_timeline
+
+        def _ev_telemetry(app, started, ended, **telemetry):
+            ev = self._ev(app, started, ended)
+            ev.update(telemetry)
+            return ev
+
+        events = [
+            _ev_telemetry(
+                "chrome.exe",
+                "09:00:00",
+                "09:05:00",
+                mouse_clicks=10,
+                key_activity=100,
+                scroll_events=3,
+                idle_seconds=5,
+            ),
+            _ev_telemetry(
+                "chrome.exe",
+                "09:05:10",
+                "09:10:00",
+                mouse_clicks=14,
+                key_activity=83,
+                scroll_events=4,
+                idle_seconds=23,
+            ),
+        ]
+        _save_timeline("pc", "2024-01-15", events)
+        content = json.loads(self.put_mock.call_args[0][3])
+        assert len(content) == 1
+        session = content[0]
+        assert session["mouse_clicks"] == 24
+        assert session["key_activity"] == 183
+        assert session["scroll_events"] == 7
+        assert session["idle_seconds"] == 28
+        assert session["duration_seconds"] == 600
+
     def test_different_apps_create_separate_sessions(self):
         from activity_log import _save_timeline
         events = [

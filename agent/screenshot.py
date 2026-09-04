@@ -15,8 +15,9 @@ from typing import Optional
 import mss
 from PIL import Image
 
-from config import SERVER_URL, API_KEY
-from diag_log import log_event
+from config import SERVER_URL, API_KEY, CONTEXT_SCREENSHOT_DEBOUNCE_SEC
+from context_events import register_context_listener, unregister_context_listener
+from diag_log import is_debug_mode, log_event
 from http_client import post
 from memory_guard import check_memory, process_ram_mb, screenshots_allowed
 from monitoring_control import is_monitoring_active
@@ -62,19 +63,36 @@ class ScreenshotWorker:
         self._sct: Optional[mss.mss] = None
         self._cycle = 0
         self._flight_lock = threading.Lock()
+        self._last_context_shot_at = 0.0
+        self._context_handler = self._on_context_change
 
     def start(self):
         if not SCREENSHOT_ENABLED:
             logger.info("Screenshot capture disabled (SCREENSHOT_ENABLED=0)")
             return
+        register_context_listener(self._context_handler)
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._running = False
+        unregister_context_listener(self._context_handler)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=SCREENSHOT_INTERVAL + 5)
+
+    def _on_context_change(self, _process_name: str, _window_title: str) -> None:
+        now = time.monotonic()
+        if now - self._last_context_shot_at < CONTEXT_SCREENSHOT_DEBOUNCE_SEC:
+            if is_debug_mode():
+                log_event("screenshot_skipped", "screenshot", reason="context_debounce")
+            return
+        if not self._running:
+            return
+        if not is_online() or not is_monitoring_active() or not screenshots_allowed():
+            return
+        self._last_context_shot_at = now
+        threading.Thread(target=self._capture_and_send, kwargs={"trigger": "context"}, daemon=True).start()
 
     def _loop(self):
         try:
@@ -99,7 +117,7 @@ class ScreenshotWorker:
                     if not screenshots_allowed():
                         time.sleep(SCREENSHOT_INTERVAL)
                         continue
-                    self._capture_and_send()
+                    self._capture_and_send(trigger="interval")
                 except Exception as e:
                     logger.warning("Screenshot error: %s", e)
                     log_event("screenshot_error", "screenshot", error=str(e))
@@ -112,7 +130,7 @@ class ScreenshotWorker:
                 self._sct.close()
                 self._sct = None
 
-    def _capture_and_send(self):
+    def _capture_and_send(self, trigger: str = "interval"):
         import socket
 
         if not is_online() or not is_monitoring_active() or not screenshots_allowed():

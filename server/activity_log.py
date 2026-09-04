@@ -18,6 +18,30 @@ from s3_storage import get_s3, S3_BUCKET
 
 logger = logging.getLogger("activity_log")
 
+
+def _telemetry_fields(ev: dict) -> dict:
+    def _as_int(key: str) -> int:
+        try:
+            return int(ev.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "mouse_clicks": _as_int("mouse_clicks"),
+        "key_activity": _as_int("key_activity"),
+        "scroll_events": _as_int("scroll_events"),
+        "idle_seconds": _as_int("idle_seconds"),
+    }
+
+
+def _empty_telemetry() -> dict:
+    return {
+        "mouse_clicks": 0,
+        "key_activity": 0,
+        "scroll_events": 0,
+        "idle_seconds": 0,
+    }
+
 # ─── Справочники ─────────────────────────────────────────────────────────────
 
 APP_NAMES: dict[str, str] = {
@@ -218,6 +242,7 @@ def save_activity(hostname: str, day: str, events: list):
             "duration_seconds": dur,
             "active": etype != "idle",
             "session_id": _session_id(hostname, started, proc),
+            **_telemetry_fields(ev),
         }
         existing.append(enriched)
         existing_keys.add(key)
@@ -260,6 +285,7 @@ def _save_timeline(hostname: str, day: str, events: list):
                 "productivity": "idle",
                 "screenshot_count": 0,
                 "screenshots": [],
+                **_telemetry_fields(ev),
             })
             continue
 
@@ -274,6 +300,11 @@ def _save_timeline(hostname: str, day: str, events: list):
             # Продолжаем сессию
             current["ended_at"] = ev.get("ended_at") or ev.get("timestamp", "")
             current["duration_seconds"] += ev.get("duration_seconds", 0)
+            telemetry = _telemetry_fields(ev)
+            current["mouse_clicks"] += telemetry["mouse_clicks"]
+            current["key_activity"] += telemetry["key_activity"]
+            current["scroll_events"] += telemetry["scroll_events"]
+            current["idle_seconds"] += telemetry["idle_seconds"]
             if ev.get("screenshot"):
                 current["screenshots"].append(ev["screenshot"])
                 current["screenshot_count"] = len(current["screenshots"])
@@ -292,6 +323,7 @@ def _save_timeline(hostname: str, day: str, events: list):
                 "productivity": ev.get("productivity", "neutral"),
                 "screenshot_count": 1 if ev.get("screenshot") else 0,
                 "screenshots": [ev["screenshot"]] if ev.get("screenshot") else [],
+                **_telemetry_fields(ev),
             }
 
     if current:

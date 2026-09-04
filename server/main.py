@@ -148,6 +148,10 @@ class EventSchema(BaseModel):
     process_name: str
     window_title: Optional[str] = ""
     event_type: str = "focus"
+    mouse_clicks: int = 0
+    key_activity: int = 0
+    scroll_events: int = 0
+    idle_seconds: int = 0
 
 
 class EventsBatchSchema(BaseModel):
@@ -216,6 +220,10 @@ def add_events(data: EventsBatchSchema, db: Session = Depends(get_db), _=Depends
             process_name=ev.process_name,
             window_title=ev.window_title,
             event_type=ev.event_type,
+            mouse_clicks=ev.mouse_clicks or 0,
+            key_activity=ev.key_activity or 0,
+            scroll_events=ev.scroll_events or 0,
+            idle_seconds=ev.idle_seconds or 0,
         )
         db.add(event)
 
@@ -248,7 +256,7 @@ def add_events(data: EventsBatchSchema, db: Session = Depends(get_db), _=Depends
             for ev in data.events:
                 day_str = ev.started_at.strftime("%Y-%m-%d")
                 by_day[day_str].append({
-                    "id": None,  # id ещё не знаем, используем timestamp как ключ
+                    "id": None,
                     "started_at": ev.started_at.isoformat(),
                     "ended_at": ev.ended_at.isoformat() if ev.ended_at else None,
                     "duration_seconds": ev.duration_seconds,
@@ -256,6 +264,10 @@ def add_events(data: EventsBatchSchema, db: Session = Depends(get_db), _=Depends
                     "window_title": ev.window_title or "",
                     "event_type": ev.event_type,
                     "productivity": productivity_label(ev.process_name, ev.window_title),
+                    "mouse_clicks": ev.mouse_clicks or 0,
+                    "key_activity": ev.key_activity or 0,
+                    "scroll_events": ev.scroll_events or 0,
+                    "idle_seconds": ev.idle_seconds or 0,
                 })
             for day_str, evs in by_day.items():
                 save_activity(computer.hostname, day_str, evs)
@@ -603,6 +615,10 @@ def api_events(computer_id: int, day: Optional[str] = None, db: Session = Depend
             "window_title": e.window_title,
             "event_type": e.event_type,
             "productivity": productivity_label(e.process_name, e.window_title),
+            "mouse_clicks": e.mouse_clicks or 0,
+            "key_activity": e.key_activity or 0,
+            "scroll_events": e.scroll_events or 0,
+            "idle_seconds": e.idle_seconds or 0,
         }
         for e in events
     ]

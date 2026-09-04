@@ -44,6 +44,14 @@ _BLOCKED_FIELD_KEYS = frozenset({
     "keyboard",
     "typed_text",
     "input_text",
+    "x",
+    "y",
+    "mouse_x",
+    "mouse_y",
+    "coordinates",
+    "coordinate",
+    "click_x",
+    "click_y",
 })
 
 # В minimal-режиме trace не используется; исключения — только в agent.log.
