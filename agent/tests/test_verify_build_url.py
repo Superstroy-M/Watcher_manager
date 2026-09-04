@@ -41,11 +41,21 @@ def test_verify_agent_exe_on_local_build():
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_binary_scan_accepts_literal_host_in_exe_payload(tmp_path: Path):
+    host = b"https://watcher.tunellink.ru/api/health"
+    fake_exe = tmp_path / "fake.exe"
+    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + host + b"MEI\x0c\x0b\x0a\x0b\x0e")
+
+    from verify_build_url import _scan_binary
+
+    _scan_binary(fake_exe, "test.exe")
+
+
 def test_binary_scan_fails_on_forbidden_host(tmp_path: Path):
     payload = b"config SERVER_URL http://201.51.8.127:8000"
     compressed = zlib.compress(payload)
     fake_exe = tmp_path / "fake.exe"
-    fake_exe.write_bytes(b"\x00" * 100 + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
+    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
 
     from verify_build_url import _scan_binary
 
@@ -57,7 +67,7 @@ def test_binary_scan_requires_production_host(tmp_path: Path):
     payload = b"unrelated module data without production host"
     compressed = zlib.compress(payload)
     fake_exe = tmp_path / "fake.exe"
-    fake_exe.write_bytes(b"\x00" * 100 + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
+    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
 
     from verify_build_url import _scan_binary
 

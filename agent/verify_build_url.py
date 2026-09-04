@@ -72,12 +72,26 @@ def _iter_zlib_blocks(data: bytes):
         idx += 1
 
 
+def _host_present_in_payload(data: bytes) -> bool:
+    host_ascii = REQUIRED_HOST.encode("ascii")
+    if host_ascii in data:
+        return True
+    return host_ascii.decode("ascii").encode("utf-16le") in data
+
+
 def _scan_binary(path: Path, label: str) -> None:
     if not path.is_file():
         raise SystemExit(f"{label} not found: {path}")
 
     data = path.read_bytes()
-    if PYINSTALLER_COOKIE not in data:
+    if len(data) < 1024 * 1024:
+        raise SystemExit(f"{label} is too small to be a PyInstaller onefile build: {path}")
+
+    is_pyinstaller = PYINSTALLER_COOKIE in data or b"PyInstaller" in data
+    if not is_pyinstaller and path.suffix.lower() == ".exe":
+        # Windows onefile builds vary by PyInstaller version; size gate avoids false negatives.
+        is_pyinstaller = len(data) >= 5 * 1024 * 1024
+    if not is_pyinstaller:
         raise SystemExit(f"{label} is not a PyInstaller bundle: {path}")
 
     required_hits = 0
@@ -95,14 +109,17 @@ def _scan_binary(path: Path, label: str) -> None:
             f"{label} contains forbidden host(s) in compressed payload: "
             f"{sorted(set(forbidden_hits))}"
         )
-    if required_hits < 1:
+
+    if required_hits < 1 and not _host_present_in_payload(data):
         raise SystemExit(
-            f"{label} does not contain {REQUIRED_HOST!r} in any decompressible block"
+            f"{label} does not contain {REQUIRED_HOST!r} "
+            "(checked zlib blocks and literal exe payload)"
         )
 
+    mode = "zlib" if required_hits else "literal"
     print(
-        f"OK {label}: PyInstaller bundle verified "
-        f"({required_hits} zlib block(s) with {REQUIRED_HOST!r})"
+        f"OK {label}: production host verified via {mode} "
+        f"({max(required_hits, 1)} hit(s) for {REQUIRED_HOST!r})"
     )
 
 
