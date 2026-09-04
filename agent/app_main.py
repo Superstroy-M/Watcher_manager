@@ -6,6 +6,14 @@ import os
 import sys
 from pathlib import Path
 
+# PyInstaller: ресурсы рядом с exe, до single-instance lock.
+if getattr(sys, "frozen", False):
+    os.chdir(os.path.dirname(sys.executable))
+
+from single_instance import acquire_or_exit
+
+acquire_or_exit()
+
 
 def _bootstrap_log(message: str) -> None:
     """Пишет в agent.log до полной инициализации logging (если exe падает на import)."""
@@ -22,15 +30,8 @@ def _bootstrap_log(message: str) -> None:
 
 
 _bootstrap_log("bootstrap: SyncLayerAgent process started")
-
-# PyInstaller: ресурсы рядом с exe
 if getattr(sys, "frozen", False):
-    os.chdir(os.path.dirname(sys.executable))
     _bootstrap_log(f"bootstrap: cwd={os.getcwd()}")
-
-from single_instance import acquire_or_exit
-
-acquire_or_exit()
 _bootstrap_log("bootstrap: single-instance lock acquired")
 
 import threading

@@ -28,21 +28,14 @@ if not defined DIR (
 echo Agent folder: %DIR%
 echo.
 
-echo [1/3] Manual start test (5 sec)...
-start "" /B "%DIR%\SyncLayerAgent.exe"
-timeout /t 5 /nobreak >nul
-tasklist | findstr /I SyncLayerAgent
-if errorlevel 1 (
-    echo WARNING: process not visible after manual start
-) else (
-    echo OK: SyncLayerAgent.exe is running
-)
+echo [1/3] Current state...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". '%DIR%\install_common.ps1'; Write-SyncLayerRuntimeReport"
 echo.
 
-echo [2/3] Re-register task and start...
+echo [2/3] Re-register task and start (1 process)...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%DIR%\install_finalize.ps1" -AgentPath "%DIR%\SyncLayerAgent.exe" -AgentDir "%DIR%"
 if errorlevel 1 (
-    echo ERROR: install_finalize failed — see messages above
+    echo ERROR: install_finalize failed - see messages above and install.log
     goto SHOW_LOG
 )
 
@@ -60,11 +53,18 @@ goto SHOW_LOG
 
 :SHOW_LOG
 echo.
+echo === install.log (last 30 lines) ===
+if exist "%DIR%\install.log" (
+    powershell -NoProfile -Command "Get-Content -Path '%DIR%\install.log' -Tail 30 -Encoding UTF8"
+) else (
+    echo (install.log not found^)
+)
+echo.
 echo === agent.log (last 30 lines) ===
 if exist "%DIR%\agent.log" (
     powershell -NoProfile -Command "Get-Content -Path '%DIR%\agent.log' -Tail 30 -Encoding UTF8"
 ) else (
-    echo (agent.log not found — exe likely blocked before first log write^)
+    echo (agent.log not found^)
 )
 echo.
 echo === Scheduled task ===

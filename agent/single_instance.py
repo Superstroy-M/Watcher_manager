@@ -13,6 +13,7 @@ logger = logging.getLogger("single_instance")
 _MUTEX_NAME = "Global\\SyncLayerAgent_SingleInstance_v1"
 _mutex_handle = None
 RESTART_WAIT_SEC = float(os.environ.get("SYNCLAYER_RESTART_WAIT_SEC", "15"))
+DUPLICATE_WAIT_SEC = float(os.environ.get("SYNCLAYER_DUPLICATE_WAIT_SEC", "3"))
 
 
 def _create_mutex(take_ownership: bool):
@@ -25,6 +26,13 @@ def _create_mutex(take_ownership: bool):
     return handle, kernel32.GetLastError()
 
 
+def _close_handle(handle) -> None:
+    import ctypes
+
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
 def acquire_or_exit() -> None:
     if sys.platform != "win32":
         return
@@ -35,10 +43,9 @@ def acquire_or_exit() -> None:
         _mutex_handle = handle
         return
 
-    if os.environ.get("SYNCLAYER_RESTART") == "1":
-        import ctypes
+    _close_handle(handle)
 
-        ctypes.windll.kernel32.CloseHandle(handle)
+    if os.environ.get("SYNCLAYER_RESTART") == "1":
         deadline = time.monotonic() + RESTART_WAIT_SEC
         while time.monotonic() < deadline:
             time.sleep(0.5)
@@ -47,8 +54,18 @@ def acquire_or_exit() -> None:
                 _mutex_handle = retry_handle
                 logger.info("Acquired single-instance mutex after restart wait")
                 return
-            ctypes.windll.kernel32.CloseHandle(retry_handle)
+            _close_handle(retry_handle)
         logger.warning("Restart mutex wait timed out after %.0fs", RESTART_WAIT_SEC)
 
-    logger.warning("Another SyncLayerAgent instance is already running — exiting")
+    deadline = time.monotonic() + DUPLICATE_WAIT_SEC
+    while time.monotonic() < deadline:
+        time.sleep(0.2)
+        retry_handle, retry_error = _create_mutex(take_ownership=True)
+        if retry_error != 183:
+            _mutex_handle = retry_handle
+            logger.info("Acquired single-instance mutex after duplicate wait")
+            return
+        _close_handle(retry_handle)
+
+    logger.warning("Another SyncLayerAgent instance is already running - exiting")
     sys.exit(0)

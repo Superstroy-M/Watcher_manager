@@ -54,7 +54,9 @@ def test_install_common_contains_required_functions():
         "function Test-SyncLayerInstall",
         "function Invoke-SyncLayerInstallFinalize",
         "function Get-SyncLayerInteractiveUser",
-        "function Normalize-SyncLayerAccountName",
+        "function Get-SyncLayerTaskRunAccount",
+        "function Invoke-SchtasksCreateSyncLayerTask",
+        "function Write-SyncLayerInstallLog",
         "function Assert-SyncLayerScheduledTask",
         "function Register-SyncLayerScheduledTaskViaApi",
         "$Script:TaskName = 'SyncLayerAgent'",
@@ -66,7 +68,15 @@ def test_installer_runs_finalize_and_verify():
     text = (AGENT_DIR / "installer" / "SyncLayerSetup.iss").read_text(encoding="utf-8")
     assert "install_finalize.ps1" in text
     assert "install_verify.ps1" in text
-    assert "runhidden waituntilterminated" in text
+    assert "runhidden waituntilterminated abortiferror" in text
+
+
+def test_install_common_uses_direct_schtasks_tr():
+    text = (AGENT_DIR / "install_common.ps1").read_text(encoding="utf-8")
+    assert "Invoke-SchtasksCreateSyncLayerTask" in text
+    assert "TASK CREATE CMD:" in text
+    assert "cmd.exe /c cd /d" not in text
+    assert "Program Files" not in text.split("Get-SyncLayerAgentDir")[0]
 
 
 def test_install_finalize_uses_common_helpers():
