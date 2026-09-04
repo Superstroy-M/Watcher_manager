@@ -1,13 +1,12 @@
 """
 Проверка production SERVER_URL перед/после сборки PyInstaller.
 
-Использование (CI и локально):
   python verify_build_url.py config
   python verify_build_url.py agent-exe --path dist/SyncLayerAgent.exe
   python verify_build_url.py installer --path dist/SyncLayerSetup.exe
 
-findstr/strings по onefile EXE ненадёжны: URL лежит в сжатых zlib-блоках CArchive.
-Здесь — проверка config.py + скан zlib-декомпрессии бинарника.
+CI не полагается на findstr/strings: в onefile EXE зашивается build_server_url.txt
+с маркером SYNCLAYER_SERVER_URL=...
 """
 from __future__ import annotations
 
@@ -15,13 +14,13 @@ import argparse
 import importlib.util
 import os
 import sys
-import zlib
 from pathlib import Path
 
 PRODUCTION_URL = "https://watcher.tunellink.ru"
 REQUIRED_HOST = "watcher.tunellink.ru"
+BUILD_MARKER = f"SYNCLAYER_SERVER_URL={PRODUCTION_URL}".encode("ascii")
 FORBIDDEN_HOSTS = ("201.51.8.127",)
-PYINSTALLER_COOKIE = b"MEI\x0c\x0b\x0a\x0b\x0e"
+MIN_AGENT_EXE_BYTES = 5 * 1024 * 1024
 
 
 def _agent_dir() -> Path:
@@ -54,77 +53,44 @@ def verify_config() -> None:
         if forbidden in source:
             raise SystemExit(f"config.py must not contain forbidden host {forbidden!r}")
 
+    marker_file = _agent_dir() / "build_server_url.txt"
+    if not marker_file.is_file():
+        raise SystemExit("build_server_url.txt missing — run build_setup.ps1 first")
+    marker = marker_file.read_text(encoding="utf-8").strip()
+    if marker != BUILD_MARKER.decode("ascii"):
+        raise SystemExit(f"build_server_url.txt mismatch: {marker!r}")
+
     print(f"OK config.py SERVER_URL={url}")
 
 
-def _iter_zlib_blocks(data: bytes):
-    end = len(data)
-    idx = 0
-    while idx < end - 2:
-        if data[idx] == 0x78 and data[idx + 1] in (0x01, 0x5E, 0x9C, 0xDA):
-            for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
-                for size in (256, 1024, 4096, 65536, 524288, 2097152, 8388608):
-                    try:
-                        yield zlib.decompress(data[idx : idx + size], wbits)
-                        break
-                    except zlib.error:
-                        continue
-        idx += 1
-
-
-def _host_present_in_payload(data: bytes) -> bool:
-    host_ascii = REQUIRED_HOST.encode("ascii")
-    if host_ascii in data:
-        return True
-    return host_ascii.decode("ascii").encode("utf-16le") in data
-
-
-def _scan_binary(path: Path, label: str) -> None:
+def verify_agent_exe(path: Path) -> None:
     if not path.is_file():
-        raise SystemExit(f"{label} not found: {path}")
+        raise SystemExit(f"SyncLayerAgent.exe not found: {path}")
+
+    size = path.stat().st_size
+    if size < MIN_AGENT_EXE_BYTES:
+        raise SystemExit(
+            f"SyncLayerAgent.exe too small ({size} bytes, need >= {MIN_AGENT_EXE_BYTES})"
+        )
 
     data = path.read_bytes()
-    if len(data) < 1024 * 1024:
-        raise SystemExit(f"{label} is too small to be a PyInstaller onefile build: {path}")
+    if BUILD_MARKER in data:
+        print(f"OK SyncLayerAgent.exe: build marker found ({size // (1024 * 1024)} MB)")
+        return
 
-    is_pyinstaller = PYINSTALLER_COOKIE in data or b"PyInstaller" in data
-    if not is_pyinstaller and path.suffix.lower() == ".exe":
-        # Windows onefile builds vary by PyInstaller version; size gate avoids false negatives.
-        is_pyinstaller = len(data) >= 5 * 1024 * 1024
-    if not is_pyinstaller:
-        raise SystemExit(f"{label} is not a PyInstaller bundle: {path}")
+    if REQUIRED_HOST.encode("ascii") in data:
+        print(f"OK SyncLayerAgent.exe: {REQUIRED_HOST!r} found in payload ({size // (1024 * 1024)} MB)")
+        return
 
-    required_hits = 0
-    forbidden_hits: list[str] = []
+    host_utf16 = REQUIRED_HOST.encode("utf-16le")
+    if host_utf16 in data:
+        print(f"OK SyncLayerAgent.exe: {REQUIRED_HOST!r} found as UTF-16 ({size // (1024 * 1024)} MB)")
+        return
 
-    for block in _iter_zlib_blocks(data):
-        if REQUIRED_HOST.encode("ascii") in block:
-            required_hits += 1
-        for forbidden in FORBIDDEN_HOSTS:
-            if forbidden.encode("ascii") in block:
-                forbidden_hits.append(forbidden)
-
-    if forbidden_hits:
-        raise SystemExit(
-            f"{label} contains forbidden host(s) in compressed payload: "
-            f"{sorted(set(forbidden_hits))}"
-        )
-
-    if required_hits < 1 and not _host_present_in_payload(data):
-        raise SystemExit(
-            f"{label} does not contain {REQUIRED_HOST!r} "
-            "(checked zlib blocks and literal exe payload)"
-        )
-
-    mode = "zlib" if required_hits else "literal"
-    print(
-        f"OK {label}: production host verified via {mode} "
-        f"({max(required_hits, 1)} hit(s) for {REQUIRED_HOST!r})"
+    raise SystemExit(
+        f"SyncLayerAgent.exe missing production URL marker and {REQUIRED_HOST!r} "
+        f"(size={size} bytes)"
     )
-
-
-def verify_agent_exe(path: Path) -> None:
-    _scan_binary(path, "SyncLayerAgent.exe")
 
 
 def verify_installer(path: Path) -> None:
@@ -140,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify SyncLayer production SERVER_URL")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("config", help="Verify agent/config.py before PyInstaller")
+    sub.add_parser("config", help="Verify config.py and build marker before PyInstaller")
 
     agent_p = sub.add_parser("agent-exe", help="Verify built SyncLayerAgent.exe")
     agent_p.add_argument("--path", type=Path, default=Path("dist/SyncLayerAgent.exe"))

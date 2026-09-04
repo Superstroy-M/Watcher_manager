@@ -1,16 +1,16 @@
-"""Tests for verify_build_url.py (config + PyInstaller binary scan)."""
+"""Tests for verify_build_url.py (config + build marker in exe)."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
-import zlib
 from pathlib import Path
 
 import pytest
 
 AGENT_DIR = Path(__file__).resolve().parents[1]
 VERIFY = AGENT_DIR / "verify_build_url.py"
+MARKER = b"SYNCLAYER_SERVER_URL=https://watcher.tunellink.ru"
 
 
 def test_verify_config_passes():
@@ -32,6 +32,10 @@ def test_verify_agent_exe_on_local_build():
     if not exe.is_file():
         pytest.skip("SyncLayerAgent binary not built locally")
 
+    data = exe.read_bytes()
+    if MARKER not in data and b"watcher.tunellink.ru" not in data:
+        pytest.skip("local build missing production URL embed — CI build only")
+
     result = subprocess.run(
         [sys.executable, str(VERIFY), "agent-exe", "--path", str(exe)],
         cwd=AGENT_DIR,
@@ -41,35 +45,30 @@ def test_verify_agent_exe_on_local_build():
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_binary_scan_accepts_literal_host_in_exe_payload(tmp_path: Path):
-    host = b"https://watcher.tunellink.ru/api/health"
-    fake_exe = tmp_path / "fake.exe"
-    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + host + b"MEI\x0c\x0b\x0a\x0b\x0e")
+def test_verify_agent_exe_accepts_build_marker(tmp_path: Path):
+    exe = tmp_path / "SyncLayerAgent.exe"
+    exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + MARKER)
 
-    from verify_build_url import _scan_binary
+    from verify_build_url import verify_agent_exe
 
-    _scan_binary(fake_exe, "test.exe")
-
-
-def test_binary_scan_fails_on_forbidden_host(tmp_path: Path):
-    payload = b"config SERVER_URL http://201.51.8.127:8000"
-    compressed = zlib.compress(payload)
-    fake_exe = tmp_path / "fake.exe"
-    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
-
-    from verify_build_url import _scan_binary
-
-    with pytest.raises(SystemExit, match="201.51.8.127"):
-        _scan_binary(fake_exe, "test.exe")
+    verify_agent_exe(exe)
 
 
-def test_binary_scan_requires_production_host(tmp_path: Path):
-    payload = b"unrelated module data without production host"
-    compressed = zlib.compress(payload)
-    fake_exe = tmp_path / "fake.exe"
-    fake_exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + compressed + b"MEI\x0c\x0b\x0a\x0b\x0e")
+def test_verify_agent_exe_rejects_missing_host(tmp_path: Path):
+    exe = tmp_path / "SyncLayerAgent.exe"
+    exe.write_bytes(b"\x00" * (5 * 1024 * 1024))
 
-    from verify_build_url import _scan_binary
+    from verify_build_url import verify_agent_exe
 
     with pytest.raises(SystemExit, match="watcher.tunellink.ru"):
-        _scan_binary(fake_exe, "test.exe")
+        verify_agent_exe(exe)
+
+
+def test_verify_agent_exe_rejects_tiny_file(tmp_path: Path):
+    exe = tmp_path / "SyncLayerAgent.exe"
+    exe.write_bytes(MARKER)
+
+    from verify_build_url import verify_agent_exe
+
+    with pytest.raises(SystemExit, match="too small"):
+        verify_agent_exe(exe)

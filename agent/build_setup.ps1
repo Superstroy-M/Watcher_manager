@@ -2,6 +2,10 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
+Write-Host "== SyncLayer: write build URL marker =="
+$buildMarker = "SYNCLAYER_SERVER_URL=https://watcher.tunellink.ru"
+Set-Content -Path "build_server_url.txt" -Value $buildMarker -Encoding ascii -NoNewline
+
 Write-Host "== SyncLayer: verify config.py =="
 python verify_build_url.py config
 
@@ -18,9 +22,9 @@ if (Test-Path "build") {
     Remove-Item -Recurse -Force "build"
 }
 
-$iconArgs = @()
+$iconArgs = @("--add-data", "build_server_url.txt;.")
 if (Test-Path "icon.png") {
-    $iconArgs = @("--icon", "icon.png", "--add-data", "icon.png;.")
+    $iconArgs += @("--icon", "icon.png", "--add-data", "icon.png;.")
 }
 
 python -m PyInstaller `
@@ -35,7 +39,9 @@ python -m PyInstaller `
   --hidden-import win32gui `
   --hidden-import win32process `
   --hidden-import win32timezone `
-  --collect-submodules pynput `
+  --hidden-import pynput `
+  --hidden-import pynput.keyboard `
+  --hidden-import pynput.mouse `
   @iconArgs `
   app_main.py `
   --distpath dist

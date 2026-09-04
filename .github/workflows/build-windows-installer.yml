@@ -10,6 +10,7 @@ on:
       - "agent/config.py"
       - "agent/requirements.txt"
       - "agent/build_setup.ps1"
+      - "agent/build_server_url.txt"
       - "agent/verify_build_url.py"
       - "agent/install_common.ps1"
       - "agent/install_finalize.ps1"
