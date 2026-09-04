@@ -19,8 +19,11 @@ class Computer(Base):
     username = Column(String(255))
     os_version = Column(String(255))
     agent_version = Column(String(50))
+    agent_ram_mb = Column(Integer)
+    screenshots_enabled = Column(Boolean, default=True)
     last_seen = Column(DateTime, default=datetime.utcnow)
-    is_online = Column(Boolean, default=False)
+    is_online = Column(Boolean, default=False)  # legacy, не используется для UI
+    monitoring_state = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     events = relationship("Event", back_populates="computer", cascade="all, delete-orphan")

@@ -5,16 +5,19 @@
 import time
 import socket
 import logging
+import os
 import threading
 from datetime import datetime
 from typing import Optional
 
-import requests
-
 from config import SERVER_URL, API_KEY
+from http_client import post
+from monitoring_control import is_monitoring_active
+from server_link import is_online, mark_offline
 
 logger = logging.getLogger("print")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
+SEEN_JOBS_MAX = int(os.environ.get("PRINT_SEEN_JOBS_MAX", "5000"))
 
 
 class PrintMonitor:
@@ -74,6 +77,8 @@ class PrintMonitor:
                             job_id = (printer_name, job.get("JobId", 0))
                             if job_id not in seen_jobs:
                                 seen_jobs.add(job_id)
+                                if len(seen_jobs) > SEEN_JOBS_MAX:
+                                    seen_jobs.clear()
                                 self._send_job(
                                     document=job.get("Document", ""),
                                     printer=printer_name,
@@ -99,6 +104,8 @@ class PrintMonitor:
             logger.warning(f"Print job parse error: {e}")
 
     def _send_job(self, document: str, printer: str, pages: int, username: str):
+        if not is_online() or not is_monitoring_active():
+            return
         payload = {
             "hostname": socket.gethostname(),
             "printed_at": datetime.utcnow().isoformat(),
@@ -108,7 +115,7 @@ class PrintMonitor:
             "username": username,
         }
         try:
-            resp = requests.post(
+            resp = post(
                 f"{SERVER_URL}/api/print",
                 json=payload,
                 headers=HEADERS,
@@ -117,4 +124,5 @@ class PrintMonitor:
             resp.raise_for_status()
             logger.info(f"Print job sent: {document} ({pages} стр.) → {printer}")
         except Exception as e:
+            mark_offline(str(e))
             logger.warning(f"Print job send failed: {e}")

@@ -2,6 +2,7 @@
 Мониторинг сетевых подключений — какие программы выходят в интернет.
 Отправляет снимок каждые 2 минуты.
 """
+import os
 import time
 import socket
 import logging
@@ -10,13 +11,17 @@ from datetime import datetime
 from typing import Optional
 
 import psutil
-import requests
 
 from config import SERVER_URL, API_KEY
+from diag_log import log_event
+from http_client import post
+from monitoring_control import is_monitoring_active
+from server_link import is_online, mark_offline
 
 logger = logging.getLogger("network")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 INTERVAL = 120  # 2 минуты
+MAX_CONNECTIONS = int(os.environ.get("NETWORK_CONNECTIONS_MAX", "5000"))
 
 # Внутренние диапазоны — не интересны
 PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
@@ -26,7 +31,7 @@ PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20."
 
 
 def _is_external(ip: str) -> bool:
-    return ip and not any(ip.startswith(p) for p in PRIVATE_PREFIXES)
+    return bool(ip) and not any(ip.startswith(p) for p in PRIVATE_PREFIXES)
 
 
 class NetworkMonitor:
@@ -51,6 +56,8 @@ class NetworkMonitor:
             time.sleep(INTERVAL)
 
     def _snapshot(self):
+        if not is_online() or not is_monitoring_active():
+            return
         pid_to_name = {p.pid: p.name() for p in psutil.process_iter(["name", "pid"])}
         connections = []
 
@@ -76,16 +83,36 @@ class NetworkMonitor:
         if not connections:
             return
 
+        total_found = len(connections)
+        if total_found > MAX_CONNECTIONS:
+            connections = connections[:MAX_CONNECTIONS]
+            logger.warning(
+                "Network snapshot truncated: %d connections found, sending %d",
+                total_found,
+                MAX_CONNECTIONS,
+            )
+            log_event(
+                "network_truncated",
+                "network",
+                total_found=total_found,
+                sent_count=MAX_CONNECTIONS,
+                max_connections=MAX_CONNECTIONS,
+            )
+
         payload = {
             "hostname": socket.gethostname(),
             "captured_at": datetime.utcnow().isoformat(),
             "connections": connections,
         }
-        resp = requests.post(
-            f"{SERVER_URL}/api/network",
-            json=payload,
-            headers=HEADERS,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        logger.debug(f"Sent {len(connections)} network connections")
+        try:
+            resp = post(
+                f"{SERVER_URL}/api/network",
+                json=payload,
+                headers=HEADERS,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            logger.debug(f"Sent {len(connections)} network connections")
+        except Exception as e:
+            mark_offline(str(e))
+            logger.warning(f"Network snapshot send failed: {e}")

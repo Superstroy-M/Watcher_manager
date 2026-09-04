@@ -10,14 +10,17 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import mss
-import requests
 from PIL import Image
 
 from config import SERVER_URL, API_KEY
+from diag_log import log_event
+from http_client import post
+from memory_guard import check_memory, process_ram_mb, screenshots_allowed
+from monitoring_control import is_monitoring_active
+from server_link import is_online, mark_offline
 
 if sys.platform == "win32":
     import mss.windows
@@ -31,10 +34,10 @@ SCREENSHOT_INTERVAL = int(os.environ.get("SCREENSHOT_INTERVAL", "30"))
 SCREENSHOT_ENABLED = os.environ.get("SCREENSHOT_ENABLED", "1").strip() != "0"
 JPEG_QUALITY = int(os.environ.get("SCREENSHOT_JPEG_QUALITY", "50"))
 MAX_CAPTURE_WIDTH = int(os.environ.get("SCREENSHOT_MAX_WIDTH", "1280"))
-OFFLINE_DIR = Path(__file__).parent / "screenshots_offline"
+MAX_SOURCE_PIXELS = int(os.environ.get("SCREENSHOT_MAX_PIXELS", "6000000"))
 BLACK_FRAME_RATIO = 0.98
-OFFLINE_FLUSH_LIMIT = 3
 GC_EVERY_N_CYCLES = 5
+CAPTURE_TIMEOUT_SEC = int(os.environ.get("SCREENSHOT_CAPTURE_TIMEOUT", "45"))
 
 
 @dataclass
@@ -45,6 +48,7 @@ class CaptureMeta:
     source_height: int
     black_ratio: float
     skipped_black: bool
+    skipped_reason: str
     capture_ms: float
     encode_ms: float
     jpeg_bytes: int
@@ -57,13 +61,13 @@ class ScreenshotWorker:
         self._thread: Optional[threading.Thread] = None
         self._sct: Optional[mss.mss] = None
         self._cycle = 0
+        self._flight_lock = threading.Lock()
 
     def start(self):
         if not SCREENSHOT_ENABLED:
             logger.info("Screenshot capture disabled (SCREENSHOT_ENABLED=0)")
             return
         self._running = True
-        OFFLINE_DIR.mkdir(exist_ok=True)
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -88,10 +92,17 @@ class ScreenshotWorker:
         try:
             while self._running:
                 try:
-                    self._flush_offline()
+                    check_memory()
+                    if not is_online() or not is_monitoring_active():
+                        time.sleep(SCREENSHOT_INTERVAL)
+                        continue
+                    if not screenshots_allowed():
+                        time.sleep(SCREENSHOT_INTERVAL)
+                        continue
                     self._capture_and_send()
                 except Exception as e:
                     logger.warning("Screenshot error: %s", e)
+                    log_event("screenshot_error", "screenshot", error=str(e))
                 self._cycle += 1
                 if self._cycle % GC_EVERY_N_CYCLES == 0:
                     gc.collect()
@@ -104,92 +115,153 @@ class ScreenshotWorker:
     def _capture_and_send(self):
         import socket
 
-        timestamp = datetime.utcnow()
-        ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
-        hostname = socket.gethostname()
-
-        meta, jpeg_bytes = self._capture_jpeg()
-        if jpeg_bytes is None:
-            logger.info(
-                "screenshot skipped capture_ms=%.1f source=%dx%d black_ratio=%.3f ram_mb=%.1f",
-                meta.capture_ms,
-                meta.source_width,
-                meta.source_height,
-                meta.black_ratio,
-                meta.ram_mb,
-            )
+        if not is_online() or not is_monitoring_active() or not screenshots_allowed():
             return
 
+        if not self._flight_lock.acquire(blocking=False):
+            logger.info("Screenshot skipped: previous capture still running")
+            log_event("screenshot_skipped", "screenshot", reason="single_flight_busy")
+            return
+
+        jpeg_bytes: Optional[bytes] = None
         try:
-            resp = requests.post(
+            if not is_online():
+                return
+
+            timestamp = datetime.utcnow()
+            ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+            hostname = socket.gethostname()
+
+            meta, jpeg_bytes = self._capture_jpeg()
+            if jpeg_bytes is None:
+                if meta.skipped_reason:
+                    logger.info(
+                        "screenshot skipped reason=%s capture_ms=%.1f source=%dx%d black_ratio=%.3f ram_mb=%.1f",
+                        meta.skipped_reason,
+                        meta.capture_ms,
+                        meta.source_width,
+                        meta.source_height,
+                        meta.black_ratio,
+                        meta.ram_mb,
+                    )
+                    log_event(
+                        "screenshot_skipped",
+                        "screenshot",
+                        reason=meta.skipped_reason,
+                        source_width=meta.source_width,
+                        source_height=meta.source_height,
+                        black_ratio=round(meta.black_ratio, 3),
+                        capture_ms=round(meta.capture_ms, 1),
+                        ram_mb=meta.ram_mb,
+                    )
+                return
+
+            if not is_online():
+                return
+
+            resp = post(
                 f"{SERVER_URL}/api/screenshot",
                 files={"file": (f"{ts_str}.jpg", jpeg_bytes, "image/jpeg")},
                 data={"hostname": hostname, "timestamp": timestamp.isoformat()},
                 headers=HEADERS,
-                timeout=20,
             )
             resp.raise_for_status()
-        except Exception:
-            offline_path = OFFLINE_DIR / f"{hostname}_{ts_str}.jpg"
-            offline_path.write_bytes(jpeg_bytes)
-            raise
+
+            logger.info(
+                "screenshot capture_ms=%.1f encode_ms=%.1f source=%dx%d out=%dx%d "
+                "black_ratio=%.3f jpeg_bytes=%d ram_mb=%.1f",
+                meta.capture_ms,
+                meta.encode_ms,
+                meta.source_width,
+                meta.source_height,
+                meta.width,
+                meta.height,
+                meta.black_ratio,
+                meta.jpeg_bytes,
+                meta.ram_mb,
+            )
+            log_event(
+                "screenshot_sent",
+                "screenshot",
+                source_width=meta.source_width,
+                source_height=meta.source_height,
+                out_width=meta.width,
+                out_height=meta.height,
+                capture_ms=round(meta.capture_ms, 1),
+                encode_ms=round(meta.encode_ms, 1),
+                jpeg_bytes=meta.jpeg_bytes,
+                ram_mb=meta.ram_mb,
+            )
+        except Exception as e:
+            mark_offline(str(e))
+            log_event("screenshot_dropped_offline", "screenshot", error=str(e))
         finally:
             jpeg_bytes = None
-
-        logger.info(
-            "screenshot capture_ms=%.1f encode_ms=%.1f source=%dx%d out=%dx%d "
-            "black_ratio=%.3f skipped_black=%s jpeg_bytes=%d ram_mb=%.1f",
-            meta.capture_ms,
-            meta.encode_ms,
-            meta.source_width,
-            meta.source_height,
-            meta.width,
-            meta.height,
-            meta.black_ratio,
-            meta.skipped_black,
-            meta.jpeg_bytes,
-            meta.ram_mb,
-        )
+            self._flight_lock.release()
 
     def _capture_jpeg(self) -> tuple[CaptureMeta, Optional[bytes]]:
+        """
+        Buffer lifecycle (encode path, peak buffers never overlap long):
+
+        1. MSS ScreenShot ``raw`` — BGRA in ``raw.raw``; black check uses only that.
+        2. ``raw.rgb`` — one RGB bytes copy (MSS property); ``raw`` deleted immediately after.
+        3. PIL ``Image`` — owns decoded pixels; previous image closed before resize swap.
+        4. ``io.BytesIO`` — scoped to JPEG encode; buffer freed on context exit.
+        5. Returned ``jpeg_bytes`` — caller clears reference in ``_capture_and_send`` finally.
+
+        Skip paths (black / too large) release ``raw`` only; no ``raw.rgb`` or PIL allocation.
+        """
         if self._sct is None:
             raise RuntimeError("Screenshot capture is only supported on Windows")
 
         capture_start = time.perf_counter()
-        raw = self._sct.grab(self._sct.monitors[0])
-        source_w, source_h = raw.width, raw.height
-        black_ratio = _black_ratio_bgra(raw.raw, source_w, source_h)
-        capture_ms = (time.perf_counter() - capture_start) * 1000
-        ram_mb = _process_ram_mb()
+        monitor = _pick_monitor(self._sct)
+        raw = self._sct.grab(monitor)
+        try:
+            source_w, source_h = raw.width, raw.height
+            black_ratio = _black_ratio_bgra(raw.raw, source_w, source_h)
+            capture_ms = (time.perf_counter() - capture_start) * 1000
+            ram_mb = process_ram_mb()
 
-        meta = CaptureMeta(
-            width=0,
-            height=0,
-            source_width=source_w,
-            source_height=source_h,
-            black_ratio=black_ratio,
-            skipped_black=black_ratio >= BLACK_FRAME_RATIO,
-            capture_ms=capture_ms,
-            encode_ms=0.0,
-            jpeg_bytes=0,
-            ram_mb=ram_mb,
-        )
+            meta = CaptureMeta(
+                width=0,
+                height=0,
+                source_width=source_w,
+                source_height=source_h,
+                black_ratio=black_ratio,
+                skipped_black=black_ratio >= BLACK_FRAME_RATIO,
+                skipped_reason="",
+                capture_ms=capture_ms,
+                encode_ms=0.0,
+                jpeg_bytes=0,
+                ram_mb=ram_mb,
+            )
 
-        if black_ratio >= BLACK_FRAME_RATIO:
+            if black_ratio >= BLACK_FRAME_RATIO:
+                meta.skipped_reason = "black_frame"
+                return meta, None
+
+            if source_w * source_h > MAX_SOURCE_PIXELS:
+                meta.skipped_reason = "source_too_large"
+                return meta, None
+
+            rgb_bytes = raw.rgb
+        finally:
             del raw
-            return meta, None
 
         encode_start = time.perf_counter()
         img: Optional[Image.Image] = None
         jpeg_bytes: Optional[bytes] = None
         try:
-            img = Image.frombytes("RGB", (source_w, source_h), raw.rgb)
-            del raw
+            img = Image.frombytes("RGB", (source_w, source_h), rgb_bytes)
+        finally:
+            del rgb_bytes
 
+        try:
             out_w, out_h = source_w, source_h
             if source_w > MAX_CAPTURE_WIDTH:
                 out_h = max(1, round(source_h * MAX_CAPTURE_WIDTH / source_w))
-                resized = img.resize((MAX_CAPTURE_WIDTH, out_h), Image.Resampling.LANCZOS)
+                resized = img.resize((MAX_CAPTURE_WIDTH, out_h), Image.Resampling.BILINEAR)
                 img.close()
                 img = resized
                 out_w, out_h = img.size
@@ -202,44 +274,18 @@ class ScreenshotWorker:
             meta.height = out_h
             meta.encode_ms = (time.perf_counter() - encode_start) * 1000
             meta.jpeg_bytes = len(jpeg_bytes)
-            meta.ram_mb = _process_ram_mb()
+            meta.ram_mb = process_ram_mb()
             return meta, jpeg_bytes
         finally:
             if img is not None:
                 img.close()
 
-    def _flush_offline(self):
-        import socket
 
-        hostname = socket.gethostname()
-        files = sorted(OFFLINE_DIR.glob("*.jpg"))
-        if not files:
-            return
-        for f in files[:OFFLINE_FLUSH_LIMIT]:
-            try:
-                ts_str = f.stem.replace(f"{hostname}_", "")
-                ts = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
-                with open(f, "rb") as fp:
-                    resp = requests.post(
-                        f"{SERVER_URL}/api/screenshot",
-                        files={"file": (f.name, fp, "image/jpeg")},
-                        data={"hostname": hostname, "timestamp": ts.isoformat()},
-                        headers=HEADERS,
-                        timeout=20,
-                    )
-                    resp.raise_for_status()
-                f.unlink()
-            except Exception:
-                break
-
-
-def _process_ram_mb() -> float:
-    try:
-        import psutil
-
-        return round(psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024), 1)
-    except Exception:
-        return 0.0
+def _pick_monitor(sct: mss.mss) -> dict:
+    monitors = sct.monitors
+    if len(monitors) > 1:
+        return monitors[1]
+    return monitors[0]
 
 
 def _black_ratio_bgra(

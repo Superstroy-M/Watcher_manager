@@ -26,3 +26,36 @@ def init_db():
         Computer, Event, DailyStat, ProcessSnapshot, NetworkConnection, PrintJob
     )
     Base.metadata.create_all(bind=engine)
+    _ensure_computer_columns()
+
+
+def _ensure_computer_columns():
+    """Добавляет новые колонки на существующих БД без Alembic."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if "computers" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("computers")}
+        if "monitoring_state" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE computers ADD COLUMN monitoring_state "
+                        "VARCHAR(20) DEFAULT 'active'"
+                    )
+                )
+        if "agent_ram_mb" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE computers ADD COLUMN agent_ram_mb INTEGER"))
+        if "screenshots_enabled" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE computers ADD COLUMN screenshots_enabled "
+                        "BOOLEAN DEFAULT TRUE"
+                    )
+                )
+    except Exception:
+        pass

@@ -31,16 +31,34 @@
     <a href="/" class="text-slate-400 hover:text-white text-sm">← Все ПК</a>
     <div class="h-4 w-px bg-slate-600"></div>
     <div class="flex items-center gap-3">
-      {% if computer.is_online %}
+      {% if connection_status == 'online' %}
         <span class="online-dot"></span>
-        <span class="text-green-400 text-sm font-medium">ОНЛАЙН</span>
+        <span class="text-green-400 text-sm font-medium">Online</span>
+      {% elif connection_status == 'unstable' %}
+        <span class="dot-unstable" style="width:10px;height:10px;border-radius:50%;background:#eab308;display:inline-block;"></span>
+        <span class="text-yellow-400 text-sm font-medium">Unstable</span>
       {% else %}
         <span class="offline-dot"></span>
-        <span class="text-slate-500 text-sm font-medium">ОФЛАЙН</span>
+        <span class="text-slate-500 text-sm font-medium">Offline</span>
       {% endif %}
     </div>
     <div class="h-4 w-px bg-slate-600"></div>
     <a href="/screenshots/{{ computer.hostname }}/{{ selected_date }}" class="text-indigo-400 hover:text-indigo-300 text-sm">📷 Скриншоты за этот день</a>
+    <div class="h-4 w-px bg-slate-600"></div>
+    <span class="text-sm text-slate-400">
+      Monitoring:
+      {% if computer.monitoring_state == 'paused' %}
+        <span class="text-amber-400">Paused</span>
+      {% else %}
+        <span class="text-green-400">Active</span>
+      {% endif %}
+      · Agent {{ computer.agent_version or '—' }}
+      {% if last_seen_age_seconds is not none %}· hb {{ last_seen_age_seconds }}s{% endif %}
+    </span>
+    <button onclick="toggleMonitoring({{ computer.id }}, '{{ computer.monitoring_state or 'active' }}')"
+      class="text-xs px-3 py-1.5 rounded-lg {% if computer.monitoring_state == 'paused' %}bg-green-700 hover:bg-green-600{% else %}bg-amber-700 hover:bg-amber-600{% endif %} text-white">
+      {% if computer.monitoring_state == 'paused' %}Возобновить{% else %}Приостановить{% endif %}
+    </button>
   </div>
 
   <div class="flex items-start justify-between mb-8 flex-wrap gap-4">
@@ -387,6 +405,15 @@ function hideTip() { tooltip.style.display = 'none'; }
 document.addEventListener('mousemove', e => { if (tooltip.style.display !== 'none') moveTip(e); });
 
 buildTimeline();
+
+function toggleMonitoring(id, current) {
+  const next = current === 'paused' ? 'active' : 'paused';
+  fetch(`/api/computer/${id}/monitoring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: next }),
+  }).then(() => location.reload());
+}
 
 function goToDay(day) {
   if (!day) return;

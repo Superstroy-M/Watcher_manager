@@ -4,18 +4,22 @@
 import time
 import socket
 import logging
+import os
 import threading
 from datetime import datetime
 from typing import Optional
 
 import psutil
-import requests
 
 from config import SERVER_URL, API_KEY
+from http_client import post
+from monitoring_control import is_monitoring_active
+from server_link import is_online, mark_offline
 
 logger = logging.getLogger("processes")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 INTERVAL = 300  # 5 минут
+MAX_PROCESSES_PER_SNAPSHOT = int(os.environ.get("PROCESS_SNAPSHOT_MAX", "2000"))
 
 
 class ProcessMonitor:
@@ -40,6 +44,8 @@ class ProcessMonitor:
             time.sleep(INTERVAL)
 
     def _snapshot(self):
+        if not is_online() or not is_monitoring_active():
+            return
         procs = []
         for p in psutil.process_iter(["name", "pid", "cpu_percent", "memory_info", "username"]):
             try:
@@ -54,16 +60,23 @@ class ProcessMonitor:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
+        if len(procs) > MAX_PROCESSES_PER_SNAPSHOT:
+            procs = procs[:MAX_PROCESSES_PER_SNAPSHOT]
+
         payload = {
             "hostname": socket.gethostname(),
             "captured_at": datetime.utcnow().isoformat(),
             "processes": procs,
         }
-        resp = requests.post(
-            f"{SERVER_URL}/api/processes",
-            json=payload,
-            headers=HEADERS,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        logger.debug(f"Sent {len(procs)} processes")
+        try:
+            resp = post(
+                f"{SERVER_URL}/api/processes",
+                json=payload,
+                headers=HEADERS,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            logger.debug(f"Sent {len(procs)} processes")
+        except Exception as e:
+            mark_offline(str(e))
+            logger.warning(f"Process snapshot send failed: {e}")

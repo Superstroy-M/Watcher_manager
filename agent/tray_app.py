@@ -14,6 +14,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 from config import SERVER_URL, SERVICE_NAME
+from http_client import PROBE_TIMEOUT, get
 
 def _icon_path() -> str:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -75,10 +76,9 @@ class TrayApp:
         self._icon.run()
 
     def _status_updater(self):
-        import requests
         while self._running:
             try:
-                r = requests.get(f"{SERVER_URL}/api/health", timeout=5)
+                r = get(f"{SERVER_URL}/api/health", timeout=PROBE_TIMEOUT)
                 online = r.status_code == 200
             except Exception:
                 online = False

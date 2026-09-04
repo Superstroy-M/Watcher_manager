@@ -12,6 +12,7 @@
   .card.offline { opacity: .55; }
   .dot-online { width:9px;height:9px;border-radius:50%;background:#22c55e;display:inline-block;animation:pulse 2s infinite; }
   .dot-offline { width:9px;height:9px;border-radius:50%;background:#475569;display:inline-block; }
+  .dot-unstable { width:9px;height:9px;border-radius:50%;background:#eab308;display:inline-block; }
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
   .prod-bar { height:6px; border-radius:3px; overflow:hidden; display:flex; gap:1px; }
@@ -54,17 +55,27 @@
   <!-- Grid -->
   <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
     <!-- Заполняется JS -->
-    {% for computer in computers %}
-    <div class="card {{ 'online' if computer.is_online else 'offline' }}" id="pc-{{ computer.id }}">
+    {% for pc in computers %}
+    <div class="card {{ 'online' if pc.connection_status == 'online' else 'offline' }}" id="pc-{{ pc.id }}">
       <div class="p-4">
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-2">
-            <span class="{{ 'dot-online' if computer.is_online else 'dot-offline' }}"></span>
-            <span class="font-semibold text-white text-sm truncate max-w-[120px]" title="{{ computer.hostname }}">{{ computer.hostname }}</span>
+            <span class="{{ 'dot-online' if pc.connection_status == 'online' else ('dot-unstable' if pc.connection_status == 'unstable' else 'dot-offline') }}"></span>
+            <span class="font-semibold text-white text-sm truncate max-w-[120px]" title="{{ pc.hostname }}">{{ pc.hostname }}</span>
           </div>
-          <a href="/computer/{{ computer.id }}" class="text-xs text-indigo-400 hover:text-indigo-300">История →</a>
+          <a href="/computer/{{ pc.id }}" class="text-xs text-indigo-400 hover:text-indigo-300">История →</a>
         </div>
-        <div class="text-xs text-slate-500 mb-3">{{ computer.username or '—' }} · {{ computer.ip_address or '—' }}</div>
+        <div class="text-xs text-slate-500 mb-1">{{ pc.username or '—' }} · {{ pc.ip_address or '—' }}</div>
+        <div class="text-xs mb-3">
+          {% if pc.monitoring_state == 'paused' %}
+            <span class="text-amber-400">Monitoring: Paused</span>
+          {% else %}
+            <span class="text-green-400">Monitoring: Active</span>
+          {% endif %}
+          {% if pc.last_seen_seconds is not none %}
+            · hb {{ pc.last_seen_seconds }}s
+          {% endif %}
+        </div>
 
         <div class="current-app text-xs mb-3 min-h-[36px]">
           <div class="text-slate-500">Загрузка...</div>
@@ -100,14 +111,17 @@ async function loadData() {
     let online = 0;
 
     data.forEach(pc => {
-      if (pc.is_online) online++;
+      if (pc.connection_status === 'online') online++;
       const card = document.getElementById('pc-' + pc.id);
       if (!card) return;
 
-      // Статус
-      card.className = `card ${pc.is_online ? 'online' : 'offline'}`;
+      card.className = `card ${pc.connection_status === 'online' ? 'online' : 'offline'}`;
       const dot = card.querySelector('span:first-child');
-      if (dot) dot.className = pc.is_online ? 'dot-online' : 'dot-offline';
+      if (dot) {
+        dot.className = pc.connection_status === 'online'
+          ? 'dot-online'
+          : (pc.connection_status === 'unstable' ? 'dot-unstable' : 'dot-offline');
+      }
 
       // Текущее приложение
       const appDiv = card.querySelector('.current-app');

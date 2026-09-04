@@ -8,6 +8,9 @@ env/
 *.egg-info/
 dist/
 build/
+.coverage
+htmlcov/
+.pytest_cache/
 
 # Env
 .env
@@ -16,7 +19,9 @@ build/
 # Logs
 *.log
 agent.log
+activity_trace*.jsonl
 offline_buffer.jsonl
+restart_guard.json
 screenshots_offline/
 
 # Screenshots (хранятся в S3)

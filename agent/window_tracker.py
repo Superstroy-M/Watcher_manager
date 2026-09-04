@@ -17,6 +17,11 @@ import psutil
 import ctypes
 
 from config import POLL_INTERVAL, IDLE_THRESHOLD
+from diag_log import log_event, truncate_text
+from monitoring_control import is_monitoring_active
+from server_link import is_online
+
+MAX_PENDING_EVENTS = int(os.environ.get("TRACKER_MAX_PENDING_EVENTS", "1000"))
 
 
 def get_idle_seconds() -> float:
@@ -112,6 +117,8 @@ class WindowTracker:
             time.sleep(POLL_INTERVAL)
 
     def _tick(self):
+        if not is_monitoring_active() or not is_online():
+            return
         idle_secs = get_idle_seconds()
         now = datetime.utcnow()
 
@@ -167,6 +174,17 @@ class WindowTracker:
         # _flush_current всегда вызывается под self._lock,
         # поэтому не берем блокировку повторно.
         self._pending_events.append(event)
+        if len(self._pending_events) > MAX_PENDING_EVENTS:
+            overflow = len(self._pending_events) - MAX_PENDING_EVENTS
+            del self._pending_events[:overflow]
+        log_event(
+            "activity_segment",
+            "tracker",
+            process_name=self._current_process or event["process_name"],
+            window_title=truncate_text(event.get("window_title", "")),
+            duration_seconds=duration,
+            segment_type=event["event_type"],
+        )
 
         self._current_process = None
         self._current_title = None

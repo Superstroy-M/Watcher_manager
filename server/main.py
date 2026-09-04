@@ -25,6 +25,12 @@ from activity_log import (
     save_activity, load_activity, get_activity_for_screenshot,
     build_report_html, _s3_get_json
 )
+from computer_status import (
+    connection_status,
+    is_connection_online,
+    last_seen_age_seconds,
+    serialize_computer,
+)
 from auth import (
     AUTH_USERNAME,
     AUTH_PASSWORD,
@@ -88,18 +94,10 @@ def local_day_utc_bounds(day_value: date) -> tuple[datetime, datetime]:
 def startup():
     init_db()
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    _mark_all_offline()
 
 
-def _mark_all_offline():
-    from database import SessionLocal
-    db = SessionLocal()
-    try:
-        cutoff = datetime.utcnow() - timedelta(minutes=2)
-        db.query(Computer).filter(Computer.last_seen < cutoff).update({"is_online": False})
-        db.commit()
-    finally:
-        db.close()
+def _monitoring_paused(computer: Computer) -> bool:
+    return (getattr(computer, "monitoring_state", None) or "active") == "paused"
 
 
 def verify_api_key(x_api_key: str = Header(...)):
@@ -137,6 +135,9 @@ class HeartbeatSchema(BaseModel):
     username: Optional[str] = None
     os_version: Optional[str] = None
     agent_version: Optional[str] = "1.0"
+    ram_mb: Optional[float] = None
+    screenshots_enabled: Optional[bool] = None
+    monitoring_state: Optional[str] = None
 
 
 class EventSchema(BaseModel):
@@ -175,6 +176,10 @@ class PrintJobSchema(BaseModel):
     username: Optional[str] = ""
 
 
+class MonitoringControlSchema(BaseModel):
+    state: str  # active | paused
+
+
 # ─── Agent API ───────────────────────────────────────────────────────────────
 
 @app.post("/api/heartbeat")
@@ -184,15 +189,23 @@ def heartbeat(data: HeartbeatSchema, db: Session = Depends(get_db), _=Depends(ve
     computer.username = data.username
     computer.os_version = data.os_version
     computer.agent_version = data.agent_version
+    if data.ram_mb is not None:
+        computer.agent_ram_mb = int(round(float(data.ram_mb)))
+    if data.screenshots_enabled is not None:
+        computer.screenshots_enabled = bool(data.screenshots_enabled)
     computer.last_seen = datetime.utcnow()
-    computer.is_online = True
     db.commit()
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "monitoring_state": computer.monitoring_state or "active",
+    }
 
 
 @app.post("/api/events")
 def add_events(data: EventsBatchSchema, db: Session = Depends(get_db), _=Depends(verify_api_key)):
     computer = get_or_create_computer(db, data.hostname)
+    if _monitoring_paused(computer):
+        return {"saved": 0, "skipped": "monitoring_paused"}
 
     for ev in data.events:
         event = Event(
@@ -224,8 +237,6 @@ def add_events(data: EventsBatchSchema, db: Session = Depends(get_db), _=Depends
         stat.total_seconds += ev.duration_seconds
         stat.launches_count += 1
 
-    computer.last_seen = datetime.utcnow()
-    computer.is_online = True
     db.commit()
 
     # Обновляем activity.json и report.txt в S3
@@ -260,8 +271,13 @@ async def receive_screenshot(
     file: UploadFile = File(...),
     hostname: str = Form(...),
     timestamp: str = Form(...),
+    db: Session = Depends(get_db),
     _=Depends(verify_api_key),
 ):
+    computer = get_or_create_computer(db, hostname)
+    if _monitoring_paused(computer):
+        return {"status": "skipped", "reason": "monitoring_paused"}
+
     ts = datetime.fromisoformat(timestamp)
     data = await file.read()
 
@@ -278,6 +294,8 @@ async def receive_screenshot(
 @app.post("/api/processes")
 def add_processes(data: ProcessSnapshotSchema, db: Session = Depends(get_db), _=Depends(verify_api_key)):
     computer = get_or_create_computer(db, data.hostname)
+    if _monitoring_paused(computer):
+        return {"status": "skipped", "reason": "monitoring_paused"}
     snap = ProcessSnapshot(
         computer_id=computer.id,
         captured_at=data.captured_at,
@@ -291,6 +309,8 @@ def add_processes(data: ProcessSnapshotSchema, db: Session = Depends(get_db), _=
 @app.post("/api/network")
 def add_network(data: NetworkSnapshotSchema, db: Session = Depends(get_db), _=Depends(verify_api_key)):
     computer = get_or_create_computer(db, data.hostname)
+    if _monitoring_paused(computer):
+        return {"status": "skipped", "reason": "monitoring_paused", "saved": 0}
     for conn in data.connections:
         nc = NetworkConnection(
             computer_id=computer.id,
@@ -310,6 +330,8 @@ def add_network(data: NetworkSnapshotSchema, db: Session = Depends(get_db), _=De
 @app.post("/api/print")
 def add_print_job(data: PrintJobSchema, db: Session = Depends(get_db), _=Depends(verify_api_key)):
     computer = get_or_create_computer(db, data.hostname)
+    if _monitoring_paused(computer):
+        return {"status": "skipped", "reason": "monitoring_paused"}
     job = PrintJob(
         computer_id=computer.id,
         printed_at=data.printed_at,
@@ -375,28 +397,33 @@ def logout(request: Request):
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard_index(request: Request, db: Session = Depends(get_db)):
-    cutoff = datetime.utcnow() - timedelta(minutes=2)
-    db.query(Computer).filter(Computer.last_seen < cutoff).update({"is_online": False})
-    db.commit()
+    now = datetime.utcnow()
     computers = db.query(Computer).order_by(desc(Computer.last_seen)).all()
+    enriched = []
+    online_count = 0
+    for c in computers:
+        item = serialize_computer(c, now)
+        enriched.append({"computer": c, **item})
+        if item["connection_status"] == "online":
+            online_count += 1
     return templates.TemplateResponse("index.html", {
         "request": request,
-        "computers": computers,
-        "online_count": sum(1 for c in computers if c.is_online),
+        "computers": enriched,
+        "online_count": online_count,
         "total_count": len(computers),
+        "connection_status": connection_status,
+        "last_seen_age_seconds": last_seen_age_seconds,
     })
 
 
 @app.get("/live", response_class=HTMLResponse)
 def live_view(request: Request, db: Session = Depends(get_db)):
-    """Реальное время — все ПК на одном экране."""
-    cutoff = datetime.utcnow() - timedelta(minutes=2)
-    db.query(Computer).filter(Computer.last_seen < cutoff).update({"is_online": False})
-    db.commit()
+    now = datetime.utcnow()
     computers = db.query(Computer).order_by(desc(Computer.last_seen)).all()
+    enriched = [serialize_computer(c, now) for c in computers]
     return templates.TemplateResponse("live.html", {
         "request": request,
-        "computers": computers,
+        "computers": enriched,
     })
 
 
@@ -472,6 +499,8 @@ def computer_detail(
     return templates.TemplateResponse("computer.html", {
         "request": request,
         "computer": computer,
+        "connection_status": connection_status(computer.last_seen),
+        "last_seen_age_seconds": last_seen_age_seconds(computer.last_seen),
         "events": events,
         "stats": stats,
         "selected_date": selected_date,
@@ -487,33 +516,38 @@ def computer_detail(
 
 @app.get("/api/computers")
 def api_computers(db: Session = Depends(get_db)):
-    cutoff = datetime.utcnow() - timedelta(minutes=2)
-    db.query(Computer).filter(Computer.last_seen < cutoff).update({"is_online": False})
-    db.commit()
+    now = datetime.utcnow()
     computers = db.query(Computer).order_by(desc(Computer.last_seen)).all()
-    return [
-        {
-            "id": c.id,
-            "hostname": c.hostname,
-            "ip_address": c.ip_address,
-            "username": c.username,
-            "is_online": c.is_online,
-            "last_seen": c.last_seen.isoformat() if c.last_seen else None,
-        }
-        for c in computers
-    ]
+    return [serialize_computer(c, now) for c in computers]
+
+
+@app.post("/api/computer/{computer_id}/monitoring")
+def set_computer_monitoring(
+    computer_id: int,
+    data: MonitoringControlSchema,
+    db: Session = Depends(get_db),
+):
+    computer = db.query(Computer).filter(Computer.id == computer_id).first()
+    if not computer:
+        raise HTTPException(status_code=404, detail="Computer not found")
+
+    state = (data.state or "").strip().lower()
+    if state not in ("active", "paused"):
+        raise HTTPException(status_code=400, detail="state must be active or paused")
+
+    computer.monitoring_state = state
+    db.commit()
+    return {"status": "ok", "monitoring_state": state}
 
 
 @app.get("/api/live")
 def api_live(db: Session = Depends(get_db)):
     """Текущее состояние всех ПК для live view."""
-    cutoff = datetime.utcnow() - timedelta(minutes=2)
-    db.query(Computer).filter(Computer.last_seen < cutoff).update({"is_online": False})
-    db.commit()
-
+    now = datetime.utcnow()
     computers = db.query(Computer).order_by(desc(Computer.last_seen)).all()
     result = []
     for c in computers:
+        base = serialize_computer(c, now)
         last_event = (
             db.query(Event)
             .filter(Event.computer_id == c.id)
@@ -535,12 +569,7 @@ def api_live(db: Session = Depends(get_db)):
                     last_screenshot_url = f"/screenshots/img/{c.hostname}/{date.today().isoformat()}/{files[-1].name}"
 
         result.append({
-            "id": c.id,
-            "hostname": c.hostname,
-            "username": c.username,
-            "ip_address": c.ip_address,
-            "is_online": c.is_online,
-            "last_seen": c.last_seen.isoformat() if c.last_seen else None,
+            **base,
             "current_app": last_event.process_name if last_event else None,
             "current_title": last_event.window_title if last_event else None,
             "current_type": last_event.event_type if last_event else None,

@@ -587,3 +587,35 @@ class TestBuildReportHtml:
         html = build_report_html("test-pc", "2024-01-15")
         assert "2ч 0м" in html
         assert "75" in html
+
+
+class TestActivityPatterns:
+    def test_build_activity_patterns_detects_repeats(self):
+        from activity_log import _build_activity_patterns
+
+        events = []
+        for i in range(6):
+            events.append({
+                "timestamp": f"2024-01-15T09:0{i}:00",
+                "ended_at": f"2024-01-15T09:0{i}:30",
+                "duration_seconds": 30,
+                "app": "excel.exe",
+                "window_title": "Отчёт продаж.xlsx",
+                "event_type": "focus",
+            })
+            events.append({
+                "timestamp": f"2024-01-15T09:0{i}:30",
+                "ended_at": f"2024-01-15T09:0{i}:45",
+                "duration_seconds": 15,
+                "app": "chrome.exe",
+                "window_title": "Почта",
+                "event_type": "focus",
+            })
+
+        patterns = _build_activity_patterns(events)
+
+        assert patterns["repeated_window_titles"]
+        assert patterns["repeated_window_titles"][0]["title"] == "Отчёт продаж.xlsx"
+        assert patterns["repeated_window_titles"][0]["count"] == 6
+        assert patterns["frequent_app_switches"]
+        assert patterns["hourly_active_seconds"]["09"] == 270

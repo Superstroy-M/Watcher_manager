@@ -357,6 +357,8 @@ def _save_summary(hostname: str, day: str, events: list):
         reverse=True,
     )
 
+    patterns = _build_activity_patterns(events)
+
     summary = {
         "hostname": hostname,
         "date": day,
@@ -380,11 +382,82 @@ def _save_summary(hostname: str, day: str, events: list):
         "top_apps": top_apps[:15],
         "switch_count": switch_count,
         "event_count": len([e for e in events if e.get("event_type") != "idle"]),
+        "patterns": patterns,
     }
 
     _s3_put(hostname, day, "summary.json",
             json.dumps(summary, ensure_ascii=False, indent=2).encode(),
             "application/json; charset=utf-8")
+
+
+def _build_activity_patterns(events: list) -> dict:
+    """Повторяющиеся действия за день для аналитики."""
+    title_stats: dict[str, dict] = {}
+    switch_stats: dict[tuple[str, str], int] = defaultdict(int)
+    hourly_active: dict[str, int] = defaultdict(int)
+    prev_app = None
+
+    for ev in events:
+        etype = ev.get("event_type", "focus")
+        dur = ev.get("duration_seconds", 0)
+        app = ev.get("app", "")
+        title = (ev.get("window_title") or "").strip()
+        ts = ev.get("timestamp") or ""
+
+        if etype != "idle" and len(ts) >= 13:
+            hourly_active[ts[11:13]] += dur
+
+        if etype == "idle":
+            prev_app = None
+            continue
+
+        if title:
+            key = title[:100]
+            bucket = title_stats.setdefault(
+                key,
+                {"title": key, "app": app, "app_name": _get_app_name(app), "count": 0, "seconds": 0},
+            )
+            bucket["count"] += 1
+            bucket["seconds"] += dur
+            if not bucket.get("app"):
+                bucket["app"] = app
+                bucket["app_name"] = _get_app_name(app)
+
+        if prev_app and prev_app != app:
+            switch_stats[(prev_app, app)] += 1
+        prev_app = app
+
+    repeated_titles = sorted(
+        [
+            {**data, "formatted": _fmt(data["seconds"])}
+            for data in title_stats.values()
+            if data["count"] >= 3
+        ],
+        key=lambda item: item["seconds"],
+        reverse=True,
+    )[:20]
+
+    frequent_switches = sorted(
+        [
+            {
+                "from_app": src,
+                "to_app": dst,
+                "from_name": _get_app_name(src),
+                "to_name": _get_app_name(dst),
+                "count": count,
+            }
+            for (src, dst), count in switch_stats.items()
+            if count >= 5
+        ],
+        key=lambda item: item["count"],
+        reverse=True,
+    )[:15]
+
+    return {
+        "repeated_window_titles": repeated_titles,
+        "frequent_app_switches": frequent_switches,
+        "hourly_active_seconds": dict(sorted(hourly_active.items())),
+    }
 
 
 def build_report_html(hostname: str, day: str) -> str:

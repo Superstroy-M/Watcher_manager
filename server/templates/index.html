@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WatcherManager — Мониторинг ПК</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
-  .online-dot { width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block; animation: pulse 2s infinite; }
-  .offline-dot { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
+  .dot-online { width:10px; height:10px; border-radius:50%; background:#22c55e; display:inline-block; animation: pulse 2s infinite; }
+  .dot-unstable { width:10px; height:10px; border-radius:50%; background:#eab308; display:inline-block; }
+  .dot-offline { width:10px; height:10px; border-radius:50%; background:#64748b; display:inline-block; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   .hover-card:hover { border-color: #6366f1; transform: translateY(-2px); transition: all .2s; }
 </style>
@@ -18,21 +18,14 @@
 <body class="min-h-screen p-6">
 
 <div class="max-w-7xl mx-auto">
-  <!-- Header -->
   <div class="flex items-center justify-between mb-8">
     <div>
       <h1 class="text-3xl font-bold text-white">SyncLayer</h1>
     </div>
     <div class="flex gap-3 items-center">
-      <a href="/live" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
-        <span class="dot-online"></span> Live
-      </a>
-      <a href="/gallery" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
-        📷 Скриншоты
-      </a>
-      <a href="/logout" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-sm font-medium">
-        Выйти
-      </a>
+      <a href="/live" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Live</a>
+      <a href="/gallery" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium">📷 Скриншоты</a>
+      <a href="/logout" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-sm font-medium">Выйти</a>
       <div class="card px-5 py-3 text-center">
         <div class="text-2xl font-bold text-green-400">{{ online_count }}</div>
         <div class="text-xs text-slate-400 mt-1">Онлайн</div>
@@ -44,56 +37,72 @@
     </div>
   </div>
 
-  <!-- Search -->
   <div class="mb-6">
-    <input
-      id="search"
-      type="text"
-      placeholder="Поиск по имени ПК или пользователю..."
+    <input id="search" type="text" placeholder="Поиск по имени ПК или пользователю..."
       class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-      oninput="filterComputers(this.value)"
-    />
+      oninput="filterComputers(this.value)" />
   </div>
 
-  <!-- Computers grid -->
   <div id="computers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-    {% for computer in computers %}
-    <a href="/computer/{{ computer.id }}" class="card hover-card p-5 block no-underline cursor-pointer" data-name="{{ computer.hostname|lower }} {{ (computer.username or '')|lower }}">
-      <div class="flex items-center justify-between mb-3">
-        <div class="flex items-center gap-2">
-          {% if computer.is_online %}
-            <span class="online-dot"></span>
-            <span class="text-xs text-green-400 font-medium">ОНЛАЙН</span>
+    {% for item in computers %}
+    {% set computer = item.computer %}
+    <div class="card hover-card p-5" data-name="{{ computer.hostname|lower }} {{ (computer.username or '')|lower }}" data-id="{{ computer.id }}">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2 conn-badge">
+          {% if item.connection_status == 'online' %}
+            <span class="dot-online"></span>
+            <span class="text-xs text-green-400 font-medium conn-label">Online</span>
+          {% elif item.connection_status == 'unstable' %}
+            <span class="dot-unstable"></span>
+            <span class="text-xs text-yellow-400 font-medium conn-label">Unstable</span>
           {% else %}
-            <span class="offline-dot"></span>
-            <span class="text-xs text-slate-500 font-medium">ОФЛАЙН</span>
+            <span class="dot-offline"></span>
+            <span class="text-xs text-slate-500 font-medium conn-label">Offline</span>
           {% endif %}
         </div>
         <span class="text-xs text-slate-500">v{{ computer.agent_version or '—' }}</span>
       </div>
 
-      <div class="mb-1">
+      <a href="/computer/{{ computer.id }}" class="block no-underline mb-3">
         <div class="text-lg font-semibold text-white truncate">{{ computer.hostname }}</div>
         <div class="text-sm text-slate-400 truncate">{{ computer.username or 'Пользователь неизвестен' }}</div>
+      </a>
+
+      <div class="text-xs text-slate-400 mb-3 mon-badge">
+        Monitoring:
+        {% if item.monitoring_state == 'paused' %}
+          <span class="text-amber-400 font-medium">⏸ Paused</span>
+        {% else %}
+          <span class="text-green-400 font-medium">🟢 Active</span>
+        {% endif %}
       </div>
 
-      <div class="mt-3 pt-3 border-t border-slate-700 text-xs text-slate-500">
-        <div>IP: {{ computer.ip_address or '—' }}</div>
-        <div class="mt-1">
-          Последний раз:
-          {% if computer.last_seen %}
-            <span class="text-slate-400">{{ (computer.last_seen|local_dt).strftime('%d.%m.%Y %H:%M') }}</span>
-          {% else %}
-            <span>—</span>
-          {% endif %}
-        </div>
+      <div class="text-xs text-slate-500 mb-3 last-seen-line">
+        {% if item.last_seen_seconds is not none %}
+          Последний heartbeat: {{ item.last_seen_seconds }} сек назад
+        {% else %}
+          Heartbeat: —
+        {% endif %}
       </div>
-    </a>
+
+      <div class="pt-3 border-t border-slate-700 flex gap-2">
+        {% if item.monitoring_state == 'paused' %}
+        <button onclick="setMonitoring({{ computer.id }}, 'active', event)"
+          class="flex-1 bg-green-700 hover:bg-green-600 text-white text-xs py-2 px-3 rounded-lg">
+          Возобновить мониторинг
+        </button>
+        {% else %}
+        <button onclick="setMonitoring({{ computer.id }}, 'paused', event)"
+          class="flex-1 bg-amber-700 hover:bg-amber-600 text-white text-xs py-2 px-3 rounded-lg">
+          Приостановить мониторинг
+        </button>
+        {% endif %}
+      </div>
+    </div>
     {% else %}
     <div class="col-span-full text-center py-20 text-slate-500">
       <div class="text-5xl mb-4">🖥️</div>
       <div class="text-lg">Нет зарегистрированных ПК</div>
-      <div class="text-sm mt-2">Установите агент на рабочие станции</div>
     </div>
     {% endfor %}
   </div>
@@ -107,26 +116,53 @@ function filterComputers(query) {
   });
 }
 
-// Auto-refresh online status every 30s
-setInterval(() => {
-  fetch('/api/computers')
-    .then(r => r.json())
-    .then(data => {
-      data.forEach(c => {
-        const card = document.querySelector(`a[href="/computer/${c.id}"]`);
-        if (!card) return;
-        const dot = card.querySelector('.online-dot, .offline-dot');
-        const label = dot?.nextElementSibling;
-        if (c.is_online) {
-          dot?.classList.replace('offline-dot', 'online-dot');
-          if (label) { label.textContent = 'ОНЛАЙН'; label.className = 'text-xs text-green-400 font-medium'; }
-        } else {
-          dot?.classList.replace('online-dot', 'offline-dot');
-          if (label) { label.textContent = 'ОФЛАЙН'; label.className = 'text-xs text-slate-500 font-medium'; }
-        }
-      });
+function connHtml(status) {
+  if (status === 'online') return { dot: 'dot-online', label: 'Online', cls: 'text-green-400' };
+  if (status === 'unstable') return { dot: 'dot-unstable', label: 'Unstable', cls: 'text-yellow-400' };
+  return { dot: 'dot-offline', label: 'Offline', cls: 'text-slate-500' };
+}
+
+function setMonitoring(id, state, ev) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  fetch(`/api/computer/${id}/monitoring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  }).then(r => r.json()).then(() => refreshCards());
+}
+
+function refreshCards() {
+  fetch('/api/computers').then(r => r.json()).then(data => {
+    data.forEach(c => {
+      const card = document.querySelector(`[data-id="${c.id}"]`);
+      if (!card) return;
+      const conn = connHtml(c.connection_status);
+      const badge = card.querySelector('.conn-badge');
+      badge.innerHTML = `<span class="${conn.dot}"></span><span class="text-xs ${conn.cls} font-medium conn-label">${conn.label}</span>`;
+      const mon = card.querySelector('.mon-badge');
+      mon.innerHTML = c.monitoring_state === 'paused'
+        ? 'Monitoring: <span class="text-amber-400 font-medium">⏸ Paused</span>'
+        : 'Monitoring: <span class="text-green-400 font-medium">🟢 Active</span>';
+      const ls = card.querySelector('.last-seen-line');
+      ls.textContent = c.last_seen_seconds != null
+        ? `Последний heartbeat: ${c.last_seen_seconds} сек назад`
+        : 'Heartbeat: —';
+      const btn = card.querySelector('button');
+      if (c.monitoring_state === 'paused') {
+        btn.textContent = 'Возобновить мониторинг';
+        btn.className = 'flex-1 bg-green-700 hover:bg-green-600 text-white text-xs py-2 px-3 rounded-lg';
+        btn.onclick = (e) => setMonitoring(c.id, 'active', e);
+      } else {
+        btn.textContent = 'Приостановить мониторинг';
+        btn.className = 'flex-1 bg-amber-700 hover:bg-amber-600 text-white text-xs py-2 px-3 rounded-lg';
+        btn.onclick = (e) => setMonitoring(c.id, 'paused', e);
+      }
     });
-}, 30000);
+  });
+}
+
+setInterval(refreshCards, 30000);
 </script>
 </body>
 </html>

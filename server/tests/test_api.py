@@ -9,6 +9,7 @@ from datetime import datetime, date, timedelta
 import pytest
 from sqlalchemy.orm import Session
 
+from computer_status import is_connection_online
 from helpers import AUTH, API_KEY
 from models import Computer, Event, DailyStat, ProcessSnapshot, NetworkConnection, PrintJob
 
@@ -104,11 +105,12 @@ class TestHeartbeat:
             "agent_version": "1.0",
         }, headers=AUTH)
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        assert r.json()["status"] == "ok"
+        assert r.json()["monitoring_state"] == "active"
         c = db_session.query(Computer).filter_by(hostname="pc-001").first()
         assert c is not None
         assert c.ip_address == "192.168.1.1"
-        assert c.is_online is True
+        assert is_connection_online(c.last_seen)
 
     def test_heartbeat_minimal_hostname_only(self, client, db_session):
         r = client.post("/api/heartbeat", json={"hostname": "pc-002"}, headers=AUTH)
@@ -440,6 +442,7 @@ class TestComputersAPI:
         assert hostnames == {"pc-1", "pc-2"}
 
     def test_api_computers_marks_offline(self, client, db_session):
+        from computer_status import connection_status
         old = Computer(hostname="old-pc",
                        last_seen=datetime.utcnow() - timedelta(minutes=10),
                        is_online=True)
@@ -447,6 +450,7 @@ class TestComputersAPI:
         db_session.commit()
         r = client.get("/api/computers")
         data = {c["hostname"]: c for c in r.json()}
+        assert data["old-pc"]["connection_status"] == "offline"
         assert data["old-pc"]["is_online"] is False
 
     def test_api_live_empty(self, client):
@@ -641,6 +645,7 @@ class TestEdgeCases:
         assert r.status_code == 400
 
     def test_heartbeat_marks_computer_online(self, client, db_session):
+        from computer_status import is_connection_online
         old = Computer(hostname="offline-pc",
                        last_seen=datetime.utcnow() - timedelta(hours=1),
                        is_online=False)
@@ -648,7 +653,7 @@ class TestEdgeCases:
         db_session.commit()
         client.post("/api/heartbeat", json={"hostname": "offline-pc"}, headers=AUTH)
         db_session.refresh(old)
-        assert old.is_online is True
+        assert is_connection_online(old.last_seen)
 
     def test_network_connection_saves_all_fields(self, client, db_session):
         r = client.post("/api/network", json={
