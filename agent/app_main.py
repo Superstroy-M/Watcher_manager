@@ -28,6 +28,11 @@ if getattr(sys, "frozen", False):
     os.chdir(os.path.dirname(sys.executable))
     _bootstrap_log(f"bootstrap: cwd={os.getcwd()}")
 
+from single_instance import acquire_or_exit
+
+acquire_or_exit()
+_bootstrap_log("bootstrap: single-instance lock acquired")
+
 import threading
 import time
 import logging

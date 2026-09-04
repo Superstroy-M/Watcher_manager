@@ -15,7 +15,7 @@ from typing import Optional
 
 from config import SERVER_URL, API_KEY
 from diag_log import log_event
-from http_client import PROBE_TIMEOUT, get
+from http_client import PROBE_TIMEOUT, get, is_transport_error
 
 logger = logging.getLogger("server_link")
 
@@ -68,6 +68,14 @@ def mark_online() -> None:
         _offline_reason = None
         _offline_announced = False
         _next_probe_at = time.monotonic() + OFFLINE_PROBE_INTERVAL
+
+
+def mark_offline_on_transport_error(exc: BaseException) -> bool:
+    """Выставляет offline только при реальной transport/network ошибке."""
+    if is_transport_error(exc):
+        mark_offline(str(exc))
+        return True
+    return False
 
 
 def mark_offline(reason: str = "") -> None:
@@ -128,7 +136,7 @@ def _run_health_probe() -> bool:
         mark_online()
         return True
     except Exception as e:
-        mark_offline(str(e))
+        mark_offline_on_transport_error(e)
         return False
 
 

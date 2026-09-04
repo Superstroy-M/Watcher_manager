@@ -6,6 +6,14 @@ on:
     branches: [ main ]
     paths:
       - "agent/app_main.py"
+      - "agent/single_instance.py"
+      - "agent/http_client.py"
+      - "agent/server_link.py"
+      - "agent/sender.py"
+      - "agent/process_monitor.py"
+      - "agent/network_monitor.py"
+      - "agent/print_monitor.py"
+      - "agent/memory_guard.py"
       - "agent/screenshot.py"
       - "agent/config.py"
       - "agent/requirements.txt"

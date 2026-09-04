@@ -16,7 +16,7 @@ from config import SERVER_URL, API_KEY
 from diag_log import log_event
 from http_client import post
 from monitoring_control import is_monitoring_active
-from server_link import is_online, mark_offline
+from server_link import is_online, mark_offline_on_transport_error
 
 logger = logging.getLogger("network")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
@@ -81,32 +81,37 @@ class NetworkMonitor:
                     "local_port": conn.laddr.port if conn.laddr else 0,
                     "status": conn.status,
                 })
+        except Exception as e:
+            logger.warning(f"Network snapshot collect failed: {e}")
+            log_event("network_cycle_error", "network", error=str(e))
+            return
 
-            if not connections:
-                log_event("network_cycle_end", "network", count=0)
-                return
+        if not connections:
+            log_event("network_cycle_end", "network", count=0)
+            return
 
-            total_found = len(connections)
-            if total_found > MAX_CONNECTIONS:
-                connections = connections[:MAX_CONNECTIONS]
-                logger.warning(
-                    "Network snapshot truncated: %d connections found, sending %d",
-                    total_found,
-                    MAX_CONNECTIONS,
-                )
-                log_event(
-                    "network_truncated",
-                    "network",
-                    total_found=total_found,
-                    sent_count=MAX_CONNECTIONS,
-                    max_connections=MAX_CONNECTIONS,
-                )
+        total_found = len(connections)
+        if total_found > MAX_CONNECTIONS:
+            connections = connections[:MAX_CONNECTIONS]
+            logger.warning(
+                "Network snapshot truncated: %d connections found, sending %d",
+                total_found,
+                MAX_CONNECTIONS,
+            )
+            log_event(
+                "network_truncated",
+                "network",
+                total_found=total_found,
+                sent_count=MAX_CONNECTIONS,
+                max_connections=MAX_CONNECTIONS,
+            )
 
-            payload = {
-                "hostname": socket.gethostname(),
-                "captured_at": datetime.utcnow().isoformat(),
-                "connections": connections,
-            }
+        payload = {
+            "hostname": socket.gethostname(),
+            "captured_at": datetime.utcnow().isoformat(),
+            "connections": connections,
+        }
+        try:
             resp = post(
                 f"{SERVER_URL}/api/network",
                 json=payload,
@@ -117,6 +122,6 @@ class NetworkMonitor:
             logger.debug(f"Sent {len(connections)} network connections")
             log_event("network_cycle_end", "network", count=len(connections))
         except Exception as e:
-            mark_offline(str(e))
+            mark_offline_on_transport_error(e)
             logger.warning(f"Network snapshot send failed: {e}")
             log_event("network_cycle_error", "network", error=str(e))

@@ -117,12 +117,46 @@ function Remove-LegacySyncLayerInstall {
     Remove-SyncLayerRunKeys
 }
 
-function Get-SyncLayerInteractiveUser {
-    $name = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
-    if (-not $name) {
-        throw 'No interactive user session (Win32_ComputerSystem.UserName is empty)'
+function Normalize-SyncLayerAccountName {
+    param(
+        [string]$Name
+    )
+
+    if (-not $Name) {
+        return ''
     }
-    return $name
+
+    if ($Name -like '*\*') {
+        return $Name.ToLowerInvariant()
+    }
+
+    $domain = $env:USERDOMAIN
+    if (-not $domain) {
+        return $Name.ToLowerInvariant()
+    }
+
+    return "$domain\$Name".ToLowerInvariant()
+}
+
+function Get-SyncLayerInteractiveUser {
+    $name = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+    if ($name) {
+        return $name
+    }
+
+    $explorer = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($explorer) {
+        $owner = $explorer.GetOwner()
+        if ($owner.User) {
+            if ($owner.Domain -and $owner.Domain -ne 'NT AUTHORITY') {
+                return "$($owner.Domain)\$($owner.User)"
+            }
+            return $owner.User
+        }
+    }
+
+    throw 'No interactive user session (Win32_ComputerSystem.UserName is empty)'
 }
 
 function Assert-SyncLayerScheduledTask {
@@ -150,8 +184,12 @@ function Assert-SyncLayerScheduledTask {
     }
 
     $principalName = $task.Principal.UserId
-    if ($principalName -and ($principalName -ne $RunAs)) {
-        throw "Scheduled task user mismatch: expected '$RunAs', got '$principalName'"
+    if ($principalName) {
+        $expected = Normalize-SyncLayerAccountName -Name $RunAs
+        $actual = Normalize-SyncLayerAccountName -Name $principalName
+        if ($actual -and $expected -and $actual -ne $expected) {
+            throw "Scheduled task user mismatch: expected '$RunAs', got '$principalName'"
+        }
     }
 }
 
@@ -188,7 +226,8 @@ function Register-SyncLayerScheduledTaskViaSchtasks {
         [string]$RunAs
     )
 
-    $command = "`"$AgentPath`""
+    $agentDir = Split-Path -Parent $AgentPath
+    $command = "cmd.exe /c cd /d `"$agentDir`" && `"$AgentPath`""
     $output = & schtasks.exe /Create /F /TN $Script:TaskName /TR $command /SC ONLOGON /RL HIGHEST /RU $RunAs /IT /NP 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "schtasks.exe failed ($LASTEXITCODE): $output"
@@ -208,6 +247,8 @@ function Register-SyncLayerScheduledTask {
     $runAs = Get-SyncLayerInteractiveUser
     $agentDir = Split-Path -Parent $AgentPath
     $errors = @()
+
+    Remove-SyncLayerScheduledTasks -ExtraTaskNames @()
 
     try {
         Register-SyncLayerScheduledTaskViaApi -AgentPath $AgentPath -RunAs $runAs -AgentDir $agentDir

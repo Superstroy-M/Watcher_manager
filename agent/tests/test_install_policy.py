@@ -54,6 +54,7 @@ def test_install_common_contains_required_functions():
         "function Test-SyncLayerInstall",
         "function Invoke-SyncLayerInstallFinalize",
         "function Get-SyncLayerInteractiveUser",
+        "function Normalize-SyncLayerAccountName",
         "function Assert-SyncLayerScheduledTask",
         "function Register-SyncLayerScheduledTaskViaApi",
         "$Script:TaskName = 'SyncLayerAgent'",

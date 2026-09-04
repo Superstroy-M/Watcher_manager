@@ -19,7 +19,7 @@ def test_send_events_does_not_buffer_on_failure():
     event_sender = sender.EventSender(tracker)
 
     with patch("sender.post", side_effect=ConnectionError("down")), patch(
-        "sender.mark_offline"
+        "sender.mark_offline_on_transport_error"
     ) as mark_offline_mock, patch("sender.log_event"):
         try:
             event_sender._send_events()

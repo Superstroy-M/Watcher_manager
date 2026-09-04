@@ -137,7 +137,7 @@ def test_network_monitor_marks_offline_on_failure(monkeypatch):
 
     with patch("network_monitor.is_online", return_value=True), patch(
         "network_monitor.post", side_effect=ConnectionError("down")
-    ), patch("network_monitor.mark_offline") as mark_offline_mock:
+    ), patch("network_monitor.mark_offline_on_transport_error") as mark_offline_mock:
         monitor._snapshot()
 
     mark_offline_mock.assert_called_once()

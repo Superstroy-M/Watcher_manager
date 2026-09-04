@@ -253,6 +253,7 @@ def test_paused_1000_cycles_input_counter_does_not_accumulate():
 
 def test_screenshot_encode_releases_raw_on_frombytes_failure():
     worker = ScreenshotWorker()
+    worker._worker_thread_id = __import__("threading").get_ident()
     sct = MagicMock()
     sct.monitors = [{"left": 0, "top": 0, "width": 10, "height": 10}]
     raw = SimpleNamespace(
@@ -263,8 +264,8 @@ def test_screenshot_encode_releases_raw_on_frombytes_failure():
     )
     sct.grab.return_value = raw
 
-    with patch("screenshot.sys.platform", "win32"), patch(
-        "screenshot.mss.mss", return_value=sct
+    with patch("screenshot.sys.platform", "win32"), patch("mss.mss", return_value=sct), patch(
+        "screenshot._configure_mss_windows"
     ), patch("screenshot._black_ratio_bgra", return_value=0.1), patch(
         "screenshot.Image.frombytes", side_effect=ValueError("bad rgb")
     ):

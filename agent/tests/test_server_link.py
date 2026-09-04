@@ -81,6 +81,17 @@ def test_try_probe_is_single_flight(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_mark_offline_on_transport_error_ignores_non_network():
+    server_link.mark_online()
+    assert server_link.is_online() is True
+
+    assert server_link.mark_offline_on_transport_error(AttributeError("'srcdc'")) is False
+    assert server_link.is_online() is True
+
+    assert server_link.mark_offline_on_transport_error(ConnectionError("down")) is True
+    assert server_link.is_online() is False
+
+
 def test_sleep_interval_changes_with_state():
     server_link.mark_online()
     assert server_link.sleep_interval() == server_link.SEND_INTERVAL

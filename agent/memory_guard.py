@@ -196,7 +196,9 @@ def _safe_restart() -> None:
             cmd = [sys.executable]
         else:
             cmd = [sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
-        subprocess.Popen(cmd, close_fds=True)
+        env = os.environ.copy()
+        env["SYNCLAYER_RESTART"] = "1"
+        subprocess.Popen(cmd, close_fds=True, env=env)
     except Exception as e:
         logger.critical("Safe restart failed: %s", e)
         return

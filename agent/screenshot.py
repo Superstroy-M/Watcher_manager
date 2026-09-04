@@ -12,21 +12,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-import mss
 from PIL import Image
 
 from config import SERVER_URL, API_KEY, CONTEXT_SCREENSHOT_DEBOUNCE_SEC
 from context_events import register_context_listener, unregister_context_listener
 from diag_log import is_debug_mode, log_event
-from http_client import post
+from http_client import is_transport_error, post
 from memory_guard import check_memory, process_ram_mb, screenshots_allowed
 from monitoring_control import is_monitoring_active
 from server_link import is_online
-
-if sys.platform == "win32":
-    import mss.windows
-
-    mss.windows.CAPTUREBLT = 0
 
 logger = logging.getLogger("screenshot")
 
@@ -39,6 +33,23 @@ MAX_SOURCE_PIXELS = int(os.environ.get("SCREENSHOT_MAX_PIXELS", "6000000"))
 BLACK_FRAME_RATIO = 0.98
 GC_EVERY_N_CYCLES = 5
 CAPTURE_TIMEOUT_SEC = int(os.environ.get("SCREENSHOT_CAPTURE_TIMEOUT", "45"))
+MSS_CAPTURE_FAILURE_LIMIT = int(os.environ.get("SCREENSHOT_MSS_FAILURE_LIMIT", "3"))
+
+
+def _configure_mss_windows() -> None:
+    if sys.platform != "win32":
+        return
+    import mss.windows
+
+    mss.windows.CAPTUREBLT = 0
+
+
+def _is_mss_capture_error(exc: BaseException) -> bool:
+    if isinstance(exc, AttributeError) and "srcdc" in str(exc):
+        return True
+    if isinstance(exc, RuntimeError) and "wrong thread" in str(exc).lower():
+        return True
+    return False
 
 
 @dataclass
@@ -66,6 +77,9 @@ class ScreenshotWorker:
         self._context_handler = self._on_context_change
         self._context_lock = threading.Lock()
         self._context_pending = False
+        self._worker_thread_id: Optional[int] = None
+        self._mss_failures = 0
+        self._mss_capture_disabled = False
 
     def start(self):
         if not SCREENSHOT_ENABLED:
@@ -97,6 +111,8 @@ class ScreenshotWorker:
             self._context_pending = True
 
     def _loop(self):
+        self._worker_thread_id = threading.get_ident()
+        _configure_mss_windows()
         try:
             import ctypes
 
@@ -112,7 +128,7 @@ class ScreenshotWorker:
                 if not is_online() or not is_monitoring_active():
                     time.sleep(SCREENSHOT_INTERVAL)
                     continue
-                if not screenshots_allowed():
+                if not screenshots_allowed() or self._mss_capture_disabled:
                     time.sleep(SCREENSHOT_INTERVAL)
                     continue
 
@@ -134,7 +150,12 @@ class ScreenshotWorker:
     def _capture_and_send(self, trigger: str = "interval"):
         import socket
 
-        if not is_online() or not is_monitoring_active() or not screenshots_allowed():
+        if (
+            not is_online()
+            or not is_monitoring_active()
+            or not screenshots_allowed()
+            or self._mss_capture_disabled
+        ):
             return
 
         if not self._flight_lock.acquire(blocking=False):
@@ -208,7 +229,24 @@ class ScreenshotWorker:
                 trigger=trigger,
             )
         except Exception as e:
-            logger.warning("Screenshot failed (%s): %s", trigger, e)
+            if _is_mss_capture_error(e):
+                self._mss_failures += 1
+                if self._mss_failures >= MSS_CAPTURE_FAILURE_LIMIT:
+                    self._mss_capture_disabled = True
+                    logger.error(
+                        "Screenshot capture disabled after %d MSS thread errors",
+                        self._mss_failures,
+                    )
+                    log_event(
+                        "screenshot_disabled",
+                        "screenshot",
+                        reason="mss_thread_error",
+                        failures=self._mss_failures,
+                    )
+            elif is_transport_error(e):
+                logger.warning("Screenshot upload failed (%s): %s", trigger, e)
+            else:
+                logger.warning("Screenshot failed (%s): %s", trigger, e)
             log_event("screenshot_error", "screenshot", error=str(e), trigger=trigger)
         finally:
             jpeg_bytes = None
@@ -221,6 +259,12 @@ class ScreenshotWorker:
         if sys.platform != "win32":
             raise RuntimeError("Screenshot capture is only supported on Windows")
 
+        if self._worker_thread_id is not None and threading.get_ident() != self._worker_thread_id:
+            raise RuntimeError("mss capture invoked from wrong thread")
+
+        import mss
+
+        _configure_mss_windows()
         sct = mss.mss()
         try:
             capture_start = time.perf_counter()
@@ -292,7 +336,7 @@ class ScreenshotWorker:
             sct.close()
 
 
-def _pick_monitor(sct: mss.mss) -> dict:
+def _pick_monitor(sct) -> dict:
     monitors = sct.monitors
     if len(monitors) > 1:
         return monitors[1]

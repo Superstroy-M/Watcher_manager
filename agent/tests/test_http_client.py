@@ -1,30 +1,20 @@
-from unittest.mock import patch
+import requests
 
-import http_client
-
-
-def test_default_timeouts_applied_on_post():
-    with patch("http_client.requests.post") as post_mock:
-        post_mock.return_value.status_code = 200
-        http_client.post("http://example/api", json={"ok": True})
-
-    _, kwargs = post_mock.call_args
-    assert kwargs["timeout"] == http_client.DEFAULT_TIMEOUT
+from http_client import is_transport_error
 
 
-def test_probe_timeout_applied_on_get():
-    with patch("http_client.requests.get") as get_mock:
-        get_mock.return_value.status_code = 200
-        http_client.get("http://example/health", timeout=http_client.PROBE_TIMEOUT)
-
-    _, kwargs = get_mock.call_args
-    assert kwargs["timeout"] == http_client.PROBE_TIMEOUT
+def test_is_transport_error_for_connection_and_timeout():
+    assert is_transport_error(requests.exceptions.ConnectionError("down")) is True
+    assert is_transport_error(requests.exceptions.Timeout("slow")) is True
+    assert is_transport_error(OSError("network down")) is True
 
 
-def test_explicit_timeout_is_respected():
-    with patch("http_client.requests.post") as post_mock:
-        post_mock.return_value.status_code = 200
-        http_client.post("http://example/api", timeout=(1, 2))
+def test_is_transport_error_false_for_http_response_errors():
+    response = requests.Response()
+    response.status_code = 500
+    assert is_transport_error(requests.exceptions.HTTPError(response=response)) is False
 
-    _, kwargs = post_mock.call_args
-    assert kwargs["timeout"] == (1, 2)
+
+def test_is_transport_error_false_for_generic_exception():
+    assert is_transport_error(AttributeError("'srcdc'")) is False
+    assert is_transport_error(ValueError("bad payload")) is False

@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 
 from config import SERVER_URL, API_KEY, AGENT_VERSION, IDLE_THRESHOLD
 from diag_log import log_event
-from http_client import post
+from http_client import post, is_transport_error
 from memory_guard import check_memory, last_ram_mb, process_ram_mb, screenshots_allowed
 from monitoring_control import apply_server_state, get_state, is_monitoring_active
-from server_link import is_online, mark_offline, mark_online, sleep_interval, try_probe
+from server_link import is_online, mark_offline_on_transport_error, mark_online, sleep_interval, try_probe
 from window_tracker import get_active_window_info, get_idle_seconds
 
 logger = logging.getLogger("sender")
@@ -45,8 +45,8 @@ class EventSender:
                 else:
                     self._discard_pending()
             except Exception as e:
-                mark_offline(str(e))
-                self._discard_pending()
+                if mark_offline_on_transport_error(e):
+                    self._discard_pending()
                 logger.warning("Send error: %s", e)
             time.sleep(sleep_interval())
 
@@ -59,7 +59,7 @@ class EventSender:
                 self._discard_pending()
             mark_online()
         except Exception as e:
-            mark_offline(str(e))
+            mark_offline_on_transport_error(e)
             raise
 
     def _discard_pending(self):
@@ -135,7 +135,7 @@ class EventSender:
                 live_count=len(live_events),
             )
         except Exception as e:
-            mark_offline(str(e))
+            mark_offline_on_transport_error(e)
             log_event(
                 "events_dropped",
                 "sender",

@@ -14,7 +14,7 @@ from config import SERVER_URL, API_KEY
 from diag_log import log_event
 from http_client import post
 from monitoring_control import is_monitoring_active
-from server_link import is_online, mark_offline
+from server_link import is_online, mark_offline_on_transport_error
 
 logger = logging.getLogger("print")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
@@ -127,6 +127,6 @@ class PrintMonitor:
             logger.info(f"Print job sent ({pages} pages) -> {printer}")
             log_event("print_cycle_end", "print", pages=pages or 0)
         except Exception as e:
-            mark_offline(str(e))
+            mark_offline_on_transport_error(e)
             logger.warning(f"Print job send failed: {e}")
             log_event("print_cycle_error", "print", error=str(e))
