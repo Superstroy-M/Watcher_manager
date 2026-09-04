@@ -16,7 +16,7 @@ if errorlevel 1 (
 
 set "DEST=%ProgramFiles%\SyncLayer"
 set "AGENT=%DEST%\SyncLayerAgent.exe"
-set "EXE_URL=http://201.51.8.127:8000/static/SyncLayerAgent.exe"
+set "EXE_URL=https://watcher.tunellink.ru/static/SyncLayerAgent.exe"
 set "HELPERS=%~dp0install_common.ps1"
 set "FINALIZE=%~dp0install_finalize.ps1"
 set "VERIFY=%~dp0install_verify.ps1"
@@ -66,7 +66,7 @@ echo.
 echo OK. SyncLayer installed.
 echo Process : 1 x SyncLayerAgent.exe
 echo Autostart: task SyncLayerAgent on user logon
-echo Dashboard: http://201.51.8.127:8000
+echo Dashboard: https://watcher.tunellink.ru
 echo Wait 1-2 minutes and refresh dashboard.
 echo.
 pause

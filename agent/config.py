@@ -1,8 +1,9 @@
 import os
 
-# Настройки агента — задайте перед установкой
-SERVER_URL = "http://201.51.8.127:8000"  # Адрес вашего сервера
-API_KEY = "change_this_secret_key_123"     # Должен совпадать с сервером
+# Production server (baked into SyncLayerAgent.exe at PyInstaller build time).
+# Override at runtime only for dev: SYNCLAYER_SERVER_URL / SYNCLAYER_API_KEY
+SERVER_URL = os.environ.get("SYNCLAYER_SERVER_URL", "https://watcher.tunellink.ru").rstrip("/")
+API_KEY = os.environ.get("SYNCLAYER_API_KEY", "change_this_secret_key_123")
 AGENT_VERSION = "1.3"
 
 # Интервал опроса активного окна (секунды)

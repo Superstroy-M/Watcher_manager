@@ -76,6 +76,21 @@ def test_uninstall_uses_shared_cleanup():
     assert "RequireScheduledTask $false" in text
 
 
+def test_config_uses_production_server_url():
+    import config
+
+    assert config.SERVER_URL == "https://watcher.tunellink.ru"
+    assert "201.51.8.127" not in config.SERVER_URL
+    assert ":8000" not in config.SERVER_URL
+
+
+def test_installer_scripts_reference_production_dashboard():
+    for name in ("install.bat", "INSTALL-ONE.bat", "INSTALL-EXE.bat"):
+        text = (AGENT_DIR / name).read_text(encoding="utf-8")
+        assert "https://watcher.tunellink.ru" in text
+        assert "201.51.8.127" not in text
+
+
 def test_install_all_points_to_install_bat():
     text = (AGENT_DIR / "install_all.bat").read_text(encoding="utf-8")
     assert "install.bat" in text

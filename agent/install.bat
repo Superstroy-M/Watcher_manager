@@ -116,7 +116,7 @@ echo ============================================
 echo  OK. SyncLayer installed.
 echo  Process : 1 x SyncLayerAgent.exe
 echo  Autostart: task SyncLayerAgent on user logon
-echo  Dashboard: http://201.51.8.127:8000
+echo  Dashboard: https://watcher.tunellink.ru
 echo  Wait 1-2 minutes then refresh the page.
 echo ============================================
 echo.

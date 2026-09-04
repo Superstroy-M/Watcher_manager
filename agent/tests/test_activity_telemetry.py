@@ -288,3 +288,149 @@ def test_input_counter_debug_events_without_sensitive_fields(tmp_path, monkeypat
     assert "input_counter_stopped" in types
     for line in lines:
         assert "window_title" not in line.lower()
+
+
+def test_input_counter_only_fixed_size_state():
+    """Счётчик хранит только 3 int — без очередей и буферов на каждый input."""
+    counter = InputCounter()
+    forbidden = ("_event_queue", "_history", "_buffer", "_pending", "_keys", "_coords")
+    for name in forbidden:
+        assert not hasattr(counter, name)
+
+    before_keys = set(counter.__dict__)
+    for _ in range(100_000):
+        counter.record_click()
+        counter.record_key()
+        counter.record_scroll()
+    after_keys = set(counter.__dict__)
+
+    assert before_keys == after_keys
+    totals = counter.peek()
+    assert totals == {"mouse_clicks": 100_000, "key_activity": 100_000, "scroll_events": 100_000}
+
+
+def test_input_counter_tracemalloc_plateau():
+    """100k input-событий не раздувают heap — только increment int-счётчиков."""
+    import gc
+    import tracemalloc
+
+    counter = InputCounter()
+    gc.collect()
+    tracemalloc.start()
+    baseline = tracemalloc.get_traced_memory()[0]
+
+    for _ in range(100_000):
+        counter.record_click()
+        counter.record_key()
+        counter.record_scroll()
+
+    gc.collect()
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert counter.peek()["mouse_clicks"] == 100_000
+    assert current - baseline < 512_000
+    assert peak - baseline < 2_000_000
+
+
+def test_long_session_one_event_carries_full_telemetry():
+    """Вся input-активность агрегируется в одно session-событие, не в N записей."""
+    counter = get_input_counter()
+    for _ in range(50_000):
+        counter.record_click()
+        counter.record_key()
+        counter.record_scroll()
+
+    tracker = WindowTracker()
+    tracker._current_process = "chrome.exe"
+    tracker._current_title = "Suppliers"
+    tracker._current_started = datetime.utcnow() - timedelta(seconds=480)
+
+    with patch("window_tracker.log_event"):
+        tracker._flush_current()
+
+    events = tracker.pop_events()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["mouse_clicks"] == 50_000
+    assert ev["key_activity"] == 50_000
+    assert ev["scroll_events"] == 50_000
+    assert ev["duration_seconds"] >= 1
+    assert ev["process_name"] == "chrome.exe"
+    assert ev["window_title"] == "Suppliers"
+    assert ev["event_type"] == "focus"
+    assert "idle_seconds" in ev
+    assert counter.peek() == {"mouse_clicks": 0, "key_activity": 0, "scroll_events": 0}
+
+
+def test_telemetry_event_payload_compact():
+    """Один session-event — фиксированный набор полей, без per-input данных."""
+    counter = get_input_counter()
+    for _ in range(10_000):
+        counter.record_click()
+
+    tracker = WindowTracker()
+    tracker._current_process = "excel.exe"
+    tracker._current_title = "Report"
+    tracker._current_started = datetime.utcnow() - timedelta(seconds=60)
+    with patch("window_tracker.log_event"):
+        tracker._flush_current()
+
+    ev = tracker.pop_events()[0]
+    expected_keys = {
+        "hostname",
+        "started_at",
+        "ended_at",
+        "duration_seconds",
+        "process_name",
+        "window_title",
+        "event_type",
+        "mouse_clicks",
+        "key_activity",
+        "scroll_events",
+        "idle_seconds",
+    }
+    assert set(ev.keys()) == expected_keys
+    encoded = json.dumps(ev)
+    assert len(encoded) < 2048
+    assert encoded.count("mouse") == 1
+
+
+def test_context_listener_registry_bounded():
+    """Повторная регистрация screenshot-handler не плодит listeners."""
+    import context_events
+
+    calls = []
+
+    def handler(_proc, _title):
+        calls.append(1)
+
+    for _ in range(100):
+        context_events.register_context_listener(handler)
+    assert len(context_events._listeners) == 1
+
+    for _ in range(50):
+        context_events.notify_context_change("app.exe", "Win")
+    assert len(calls) == 50
+
+    context_events.unregister_context_listener(handler)
+    assert context_events._listeners == []
+
+
+def test_rapid_session_flushes_pending_events_capped(monkeypatch):
+    """При лавине session-flush буфер событий не растёт бесконечно."""
+    monkeypatch.setattr("window_tracker.MAX_PENDING_EVENTS", 50)
+    tracker = WindowTracker()
+    now = datetime.utcnow()
+
+    with patch("window_tracker.log_event"):
+        for i in range(200):
+            tracker._current_process = f"app{i}.exe"
+            tracker._current_title = f"W{i}"
+            tracker._current_started = now - timedelta(seconds=10)
+            tracker._is_idle = False
+            tracker._flush_current(now=now)
+
+    assert len(tracker._pending_events) == 50
+    assert tracker._pending_events[0]["process_name"] == "app150.exe"
+    assert tracker._pending_events[-1]["process_name"] == "app199.exe"

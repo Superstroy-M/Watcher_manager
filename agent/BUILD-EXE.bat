@@ -42,7 +42,7 @@ if not exist "%cd%\dist\SyncLayerAgent.exe" (
 
 set "STATIC_DIR=%~dp0..\server\static"
 set "STATIC_EXE=%STATIC_DIR%\SyncLayerAgent.exe"
-set "DOWNLOAD_URL=http://201.51.8.127:8000/static/SyncLayerAgent.exe"
+set "DOWNLOAD_URL=https://watcher.tunellink.ru/static/SyncLayerAgent.exe"
 
 if not exist "%STATIC_DIR%" (
     echo ERROR: server\static folder not found:

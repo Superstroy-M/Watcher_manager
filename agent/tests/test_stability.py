@@ -238,6 +238,21 @@ def test_heartbeat_includes_diagnostics():
     assert payload["monitoring_state"] == "paused"
 
 
+def test_paused_1000_cycles_input_counter_does_not_accumulate():
+    monitoring_control.reset_for_tests("paused")
+    from input_counter import InputCounter, reset_input_counter_for_tests
+
+    reset_input_counter_for_tests()
+    counter = InputCounter()
+    for _ in range(1000):
+        counter.sync_monitoring_state()
+        counter.record_click()
+        counter.record_key()
+        counter.record_scroll()
+
+    assert counter.peek() == {"mouse_clicks": 0, "key_activity": 0, "scroll_events": 0}
+
+
 def test_screenshot_encode_releases_raw_on_frombytes_failure():
     worker = ScreenshotWorker()
     worker._sct = MagicMock()

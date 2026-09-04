@@ -48,6 +48,6 @@ attrib +h "%DEST%" >nul 2>&1
 
 echo.
 echo OK. SyncLayerAgent.exe installed and started.
-echo Dashboard: http://201.51.8.127:8000
+echo Dashboard: https://watcher.tunellink.ru
 echo.
 pause
