@@ -68,7 +68,9 @@ def test_installer_runs_finalize_and_verify():
     text = (AGENT_DIR / "installer" / "SyncLayerSetup.iss").read_text(encoding="utf-8")
     assert "install_finalize.ps1" in text
     assert "install_verify.ps1" in text
-    assert "runhidden waituntilterminated abortiferror" in text
+    assert "procedure CurStepChanged" in text
+    assert "abortiferror" not in text
+    assert "runascurrentuser" not in text
 
 
 def test_install_common_uses_direct_schtasks_tr():
