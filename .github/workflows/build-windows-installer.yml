@@ -5,25 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "agent/app_main.py"
-      - "agent/single_instance.py"
-      - "agent/http_client.py"
-      - "agent/server_link.py"
-      - "agent/sender.py"
-      - "agent/process_monitor.py"
-      - "agent/network_monitor.py"
-      - "agent/print_monitor.py"
-      - "agent/memory_guard.py"
-      - "agent/screenshot.py"
-      - "agent/config.py"
-      - "agent/requirements.txt"
-      - "agent/build_setup.ps1"
-      - "agent/verify_build_url.py"
-      - "agent/install_common.ps1"
-      - "agent/install_finalize.ps1"
-      - "agent/install_verify.ps1"
-      - "agent/installer/**"
-      - "agent/icon.png"
+      - "agent/**"
       - ".github/workflows/build-windows-installer.yml"
 
 jobs:
@@ -43,17 +25,30 @@ jobs:
         shell: powershell
         run: choco install innosetup --no-progress -y
 
-      - name: Verify config.py before build
+      - name: Verify config.py SERVER_URL
         shell: powershell
         working-directory: agent
         run: python verify_build_url.py config
 
+      - name: Install Python dependencies
+        shell: powershell
+        working-directory: agent
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build SyncLayerAgent.exe
+        shell: powershell
+        working-directory: agent
+        run: .\build_setup.ps1 -AgentOnly
+
       - name: Build SyncLayerSetup.exe
         shell: powershell
         working-directory: agent
-        run: .\build_setup.ps1
+        run: .\build_setup.ps1 -InstallerOnly
 
-      - name: Upload installer artifact
+      - name: Upload SyncLayerSetup.exe
         uses: actions/upload-artifact@v4
         with:
           name: SyncLayerSetup
