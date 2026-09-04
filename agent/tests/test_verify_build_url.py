@@ -1,4 +1,4 @@
-"""Tests for verify_build_url.py (config + build marker in exe)."""
+"""Tests for verify_build_url.py (config source checks for CI)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 AGENT_DIR = Path(__file__).resolve().parents[1]
 VERIFY = AGENT_DIR / "verify_build_url.py"
-MARKER = b"SYNCLAYER_SERVER_URL=https://watcher.tunellink.ru"
 
 
 def test_verify_config_passes():
@@ -25,50 +24,20 @@ def test_verify_config_passes():
     assert "watcher.tunellink.ru" in result.stdout
 
 
-def test_verify_agent_exe_on_local_build():
-    exe = AGENT_DIR / "dist" / "SyncLayerAgent"
-    if sys.platform == "win32":
-        exe = AGENT_DIR / "dist" / "SyncLayerAgent.exe"
-    if not exe.is_file():
-        pytest.skip("SyncLayerAgent binary not built locally")
+def test_verify_installer_checks_file_exists(tmp_path: Path):
+    installer = tmp_path / "SyncLayerSetup.exe"
+    installer.write_bytes(b"\x00" * (200 * 1024))
 
-    data = exe.read_bytes()
-    if MARKER not in data and b"watcher.tunellink.ru" not in data:
-        pytest.skip("local build missing production URL embed — CI build only")
+    from verify_build_url import verify_installer
 
-    result = subprocess.run(
-        [sys.executable, str(VERIFY), "agent-exe", "--path", str(exe)],
-        cwd=AGENT_DIR,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
+    verify_installer(installer)
 
 
-def test_verify_agent_exe_accepts_build_marker(tmp_path: Path):
-    exe = tmp_path / "SyncLayerAgent.exe"
-    exe.write_bytes(b"\x00" * (5 * 1024 * 1024) + MARKER)
+def test_verify_installer_rejects_tiny_file(tmp_path: Path):
+    installer = tmp_path / "SyncLayerSetup.exe"
+    installer.write_bytes(b" tiny")
 
-    from verify_build_url import verify_agent_exe
+    from verify_build_url import verify_installer
 
-    verify_agent_exe(exe)
-
-
-def test_verify_agent_exe_rejects_missing_host(tmp_path: Path):
-    exe = tmp_path / "SyncLayerAgent.exe"
-    exe.write_bytes(b"\x00" * (5 * 1024 * 1024))
-
-    from verify_build_url import verify_agent_exe
-
-    with pytest.raises(SystemExit, match="watcher.tunellink.ru"):
-        verify_agent_exe(exe)
-
-
-def test_verify_agent_exe_rejects_tiny_file(tmp_path: Path):
-    exe = tmp_path / "SyncLayerAgent.exe"
-    exe.write_bytes(MARKER)
-
-    from verify_build_url import verify_agent_exe
-
-    with pytest.raises(SystemExit, match="too small"):
-        verify_agent_exe(exe)
+    with pytest.raises(SystemExit, match="suspiciously small"):
+        verify_installer(installer)
