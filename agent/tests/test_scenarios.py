@@ -159,8 +159,6 @@ def test_offline_period_only_health_probes_not_full_uploads(monkeypatch):
 
 def test_screenshot_single_flight_skips_overlapping_capture(worker=None):
     worker = ScreenshotWorker()
-    worker._sct = MagicMock()
-    worker._sct.monitors = [{"left": 0, "top": 0, "width": 100, "height": 100}]
     worker._flight_lock.acquire()
 
     with patch("screenshot.is_online", return_value=True), patch(

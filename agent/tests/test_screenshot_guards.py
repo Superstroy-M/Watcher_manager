@@ -15,7 +15,6 @@ def setup_function():
 def test_screenshot_skips_when_monitoring_paused():
     monitoring_control.reset_for_tests("paused")
     worker = ScreenshotWorker()
-    worker._sct = MagicMock()
 
     with patch("screenshot.is_online", return_value=True), patch.object(
         worker, "_capture_jpeg"
@@ -28,7 +27,6 @@ def test_screenshot_skips_when_monitoring_paused():
 def test_screenshot_skips_when_memory_guard_disabled():
     memory_guard.check_memory(force_ram_mb=520.0)
     worker = ScreenshotWorker()
-    worker._sct = MagicMock()
 
     with patch("screenshot.is_online", return_value=True), patch.object(
         worker, "_capture_jpeg"

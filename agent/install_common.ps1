@@ -117,6 +117,84 @@ function Remove-LegacySyncLayerInstall {
     Remove-SyncLayerRunKeys
 }
 
+function Get-SyncLayerInteractiveUser {
+    $name = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+    if (-not $name) {
+        throw 'No interactive user session (Win32_ComputerSystem.UserName is empty)'
+    }
+    return $name
+}
+
+function Assert-SyncLayerScheduledTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AgentPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RunAs
+    )
+
+    if (-not (Test-SyncLayerScheduledTaskExists)) {
+        throw "Scheduled task '$($Script:TaskName)' was not created"
+    }
+
+    $task = Get-ScheduledTask -TaskName $Script:TaskName -ErrorAction Stop
+    $action = $task.Actions | Select-Object -First 1
+    if (-not $action -or $action.Execute -ne $AgentPath) {
+        $actual = if ($action) { $action.Execute } else { '(none)' }
+        throw "Scheduled task action mismatch: expected '$AgentPath', got '$actual'"
+    }
+
+    $logonTrigger = @($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })
+    if ($logonTrigger.Count -lt 1) {
+        throw "Scheduled task '$($Script:TaskName)' has no AtLogOn trigger"
+    }
+
+    $principalName = $task.Principal.UserId
+    if ($principalName -and ($principalName -ne $RunAs)) {
+        throw "Scheduled task user mismatch: expected '$RunAs', got '$principalName'"
+    }
+}
+
+function Register-SyncLayerScheduledTaskViaApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AgentPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RunAs,
+        [Parameter(Mandatory = $true)]
+        [string]$AgentDir
+    )
+
+    Unregister-ScheduledTask -TaskName $Script:TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+
+    $action = New-ScheduledTaskAction -Execute $AgentPath -WorkingDirectory $AgentDir
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $RunAs
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    $principal = New-ScheduledTaskPrincipal -UserId $RunAs -LogonType Interactive -RunLevel Highest
+    Register-ScheduledTask `
+        -TaskName $Script:TaskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Settings $settings `
+        -Principal $principal `
+        -Force | Out-Null
+}
+
+function Register-SyncLayerScheduledTaskViaSchtasks {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AgentPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RunAs
+    )
+
+    $command = "`"$AgentPath`""
+    $output = & schtasks.exe /Create /F /TN $Script:TaskName /TR $command /SC ONLOGON /RL HIGHEST /RU $RunAs /IT /NP 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "schtasks.exe failed ($LASTEXITCODE): $output"
+    }
+}
+
 function Register-SyncLayerScheduledTask {
     param(
         [Parameter(Mandatory = $true)]
@@ -127,13 +205,23 @@ function Register-SyncLayerScheduledTask {
         throw "Agent executable not found: $AgentPath"
     }
 
-    $command = "`"$AgentPath`""
-    $runAs = if ($env:USERDOMAIN) { "$($env:USERDOMAIN)\$($env:USERNAME)" } else { $env:USERNAME }
+    $runAs = Get-SyncLayerInteractiveUser
     $agentDir = Split-Path -Parent $AgentPath
-    & schtasks.exe /Create /F /TN $Script:TaskName /TR $command /SC ONLOGON /RL HIGHEST /RU $runAs /IT /NP | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create scheduled task '$($Script:TaskName)' for user '$runAs'"
+    $errors = @()
+
+    try {
+        Register-SyncLayerScheduledTaskViaApi -AgentPath $AgentPath -RunAs $runAs -AgentDir $agentDir
+    } catch {
+        $errors += "Register-ScheduledTask: $($_.Exception.Message)"
+        try {
+            Register-SyncLayerScheduledTaskViaSchtasks -AgentPath $AgentPath -RunAs $runAs
+        } catch {
+            $errors += "schtasks.exe: $($_.Exception.Message)"
+            throw ($errors -join '; ')
+        }
     }
+
+    Assert-SyncLayerScheduledTask -AgentPath $AgentPath -RunAs $runAs
 }
 
 function Start-SyncLayerAgentOnce {

@@ -82,8 +82,6 @@ def test_network_connections_truncated_at_max(monkeypatch):
 
 def test_screenshot_exception_1000_cycles_no_lock_leak():
     worker = ScreenshotWorker()
-    worker._sct = MagicMock()
-    worker._sct.monitors = [{"left": 0, "top": 0, "width": 100, "height": 100}]
 
     with patch("screenshot.is_online", return_value=True), patch(
         "screenshot.screenshots_allowed", return_value=True
@@ -255,17 +253,19 @@ def test_paused_1000_cycles_input_counter_does_not_accumulate():
 
 def test_screenshot_encode_releases_raw_on_frombytes_failure():
     worker = ScreenshotWorker()
-    worker._sct = MagicMock()
-    worker._sct.monitors = [{"left": 0, "top": 0, "width": 10, "height": 10}]
+    sct = MagicMock()
+    sct.monitors = [{"left": 0, "top": 0, "width": 10, "height": 10}]
     raw = SimpleNamespace(
         width=10,
         height=10,
         raw=bytes(10 * 10 * 4),
         rgb=b"bad",
     )
-    worker._sct.grab.return_value = raw
+    sct.grab.return_value = raw
 
-    with patch("screenshot._black_ratio_bgra", return_value=0.1), patch(
+    with patch("screenshot.sys.platform", "win32"), patch(
+        "screenshot.mss.mss", return_value=sct
+    ), patch("screenshot._black_ratio_bgra", return_value=0.1), patch(
         "screenshot.Image.frombytes", side_effect=ValueError("bad rgb")
     ):
         with pytest.raises(ValueError):

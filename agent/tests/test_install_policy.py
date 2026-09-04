@@ -53,9 +53,20 @@ def test_install_common_contains_required_functions():
         "function Remove-LegacySyncLayerInstall",
         "function Test-SyncLayerInstall",
         "function Invoke-SyncLayerInstallFinalize",
+        "function Get-SyncLayerInteractiveUser",
+        "function Assert-SyncLayerScheduledTask",
+        "function Register-SyncLayerScheduledTaskViaApi",
         "$Script:TaskName = 'SyncLayerAgent'",
     ]:
         assert pattern in text, f"install_common.ps1 missing: {pattern}"
+
+
+def test_installer_runs_finalize_as_current_user():
+    text = (AGENT_DIR / "installer" / "SyncLayerSetup.iss").read_text(encoding="utf-8")
+    assert "runascurrentuser" in text
+    assert "abortiferror" in text
+    assert "install_finalize.ps1" in text
+    assert "install_verify.ps1" in text
 
 
 def test_install_finalize_uses_common_helpers():

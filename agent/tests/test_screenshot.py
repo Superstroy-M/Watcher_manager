@@ -39,12 +39,17 @@ def _make_raw(width: int, height: int, color=(120, 140, 160)):
     return SimpleNamespace(width=width, height=height, raw=bgra, rgb=rgb)
 
 
+def _mock_mss(monitors=None, grab_return=None):
+    sct = MagicMock()
+    sct.monitors = monitors or [{"left": 0, "top": 0, "width": 1920, "height": 1080}]
+    sct.grab.return_value = grab_return or _make_raw(1920, 1080)
+    sct.close = MagicMock()
+    return sct
+
+
 @pytest.fixture
 def worker():
-    w = ScreenshotWorker()
-    w._sct = MagicMock()
-    w._sct.monitors = [{"left": 0, "top": 0, "width": 1920, "height": 1080}]
-    return w
+    return ScreenshotWorker()
 
 
 def test_captureblt_disabled_on_windows():
@@ -55,56 +60,58 @@ def test_captureblt_disabled_on_windows():
 
 
 def test_single_grab_uses_primary_monitor_when_available(worker):
-    worker._sct.monitors = [
-        {"left": 0, "top": 0, "width": 3840, "height": 1080},
-        {"left": 0, "top": 0, "width": 1920, "height": 1080},
-    ]
-    worker._sct.grab.return_value = _make_raw(1920, 1080)
+    sct = _mock_mss(
+        monitors=[
+            {"left": 0, "top": 0, "width": 3840, "height": 1080},
+            {"left": 0, "top": 0, "width": 1920, "height": 1080},
+        ]
+    )
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=sct):
+        meta, jpeg = worker._capture_jpeg()
 
-    meta, jpeg = worker._capture_jpeg()
-
-    worker._sct.grab.assert_called_once_with(worker._sct.monitors[1])
+    sct.grab.assert_called_once_with(sct.monitors[1])
+    sct.close.assert_called_once()
     assert jpeg is not None
     assert meta.skipped_black is False
     assert meta.width <= MAX_CAPTURE_WIDTH
 
 
 def test_single_monitor_uses_only_monitor(worker):
-    worker._sct.grab.return_value = _make_raw(1920, 1080)
+    sct = _mock_mss()
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=sct):
+        meta, jpeg = worker._capture_jpeg()
 
-    meta, jpeg = worker._capture_jpeg()
-
-    worker._sct.grab.assert_called_once_with(worker._sct.monitors[0])
+    sct.grab.assert_called_once_with(sct.monitors[0])
     assert jpeg is not None
 
 
 def test_black_frame_is_skipped_without_rgb_conversion(worker):
-    worker._sct.grab.return_value = _make_raw(1920, 1080, color=(0, 0, 0))
-
-    meta, jpeg = worker._capture_jpeg()
+    sct = _mock_mss(grab_return=_make_raw(1920, 1080, color=(0, 0, 0)))
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=sct):
+        meta, jpeg = worker._capture_jpeg()
 
     assert jpeg is None
     assert meta.skipped_black is True
 
 
 def test_large_frame_is_downscaled(worker):
-    worker._sct.grab.return_value = _make_raw(2800, 2000)
-
-    meta, jpeg = worker._capture_jpeg()
+    sct = _mock_mss(grab_return=_make_raw(2800, 2000))
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=sct):
+        meta, jpeg = worker._capture_jpeg()
 
     assert jpeg is not None
     assert meta.width == MAX_CAPTURE_WIDTH
     assert meta.height < 2000
 
 
-def test_mss_instance_reused_not_recreated_each_cycle():
+def test_mss_created_and_closed_per_capture(worker):
     created = []
 
     class FakeMSS:
         def __init__(self):
-            created.append(self)
             self.monitors = [{"left": 0, "top": 0, "width": 100, "height": 100}]
             self.closed = False
+            created.append(self)
 
         def grab(self, monitor):
             return _make_raw(100, 100)
@@ -112,21 +119,40 @@ def test_mss_instance_reused_not_recreated_each_cycle():
         def close(self):
             self.closed = True
 
-    worker = ScreenshotWorker()
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", FakeMSS):
+        worker._capture_jpeg()
+        worker._capture_jpeg()
+
+    assert len(created) == 2
+    assert all(item.closed for item in created)
+
+
+def test_cross_thread_stale_shared_sct_not_used(worker):
+    stale = MagicMock()
+    stale.grab.side_effect = AttributeError("'srcdc'")
+    worker._sct = stale
+
+    fresh = _mock_mss()
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=fresh):
+        meta, jpeg = worker._capture_jpeg()
+
+    stale.grab.assert_not_called()
+    fresh.grab.assert_called_once()
+    assert jpeg is not None
+
+
+def test_context_change_sets_pending_without_extra_thread(worker):
     worker._running = True
+    worker._last_context_shot_at = 0.0
+    with patch("screenshot.is_online", return_value=True), patch(
+        "screenshot.is_monitoring_active", return_value=True
+    ), patch("screenshot.screenshots_allowed", return_value=True), patch(
+        "screenshot.threading.Thread"
+    ) as thread_mock:
+        worker._on_context_change("chrome.exe", "Tab")
 
-    with patch("screenshot.sys.platform", "win32"), patch(
-        "screenshot.mss.mss", FakeMSS
-    ), patch("screenshot.is_online", return_value=True), patch(
-        "screenshot.screenshots_allowed", return_value=True
-    ), patch.object(
-        worker, "_capture_and_send"
-    ), patch("screenshot.time.sleep", side_effect=StopIteration):
-        with pytest.raises(StopIteration):
-            worker._loop()
-
-    assert len(created) == 1
-    assert created[0].closed is True
+    thread_mock.assert_not_called()
+    assert worker._context_pending is True
 
 
 def test_screenshot_loop_skips_capture_when_server_offline(worker):
@@ -142,7 +168,7 @@ def test_screenshot_loop_skips_capture_when_server_offline(worker):
     capture.assert_not_called()
 
 
-def test_capture_and_send_drops_on_upload_failure(worker):
+def test_capture_and_send_does_not_mark_offline_on_upload_failure(worker):
     meta = CaptureMeta(
         width=1280,
         height=720,
@@ -159,12 +185,30 @@ def test_capture_and_send_drops_on_upload_failure(worker):
 
     with patch.object(worker, "_capture_jpeg", return_value=(meta, b"jpeg")), patch(
         "screenshot.post", side_effect=ConnectionError("down")
-    ), patch("screenshot.mark_offline") as mark_offline_mock, patch(
+    ), patch("server_link.mark_offline") as mark_offline_mock, patch(
         "screenshot.is_online", return_value=True
-    ), patch("screenshot.screenshots_allowed", return_value=True):
+    ), patch("screenshot.screenshots_allowed", return_value=True), patch(
+        "screenshot.log_event"
+    ) as log_mock:
         worker._capture_and_send()
 
-    mark_offline_mock.assert_called_once()
+    mark_offline_mock.assert_not_called()
+    assert log_mock.call_args[0][0] == "screenshot_error"
+
+
+def test_capture_and_send_does_not_mark_offline_on_capture_failure(worker):
+    with patch.object(
+        worker,
+        "_capture_jpeg",
+        side_effect=AttributeError("'srcdc'"),
+    ), patch("server_link.mark_offline") as mark_offline_mock, patch(
+        "screenshot.is_online", return_value=True
+    ), patch("screenshot.screenshots_allowed", return_value=True), patch(
+        "screenshot.log_event"
+    ):
+        worker._capture_and_send()
+
+    mark_offline_mock.assert_not_called()
 
 
 def test_capture_and_send_logs_metrics(worker):
@@ -210,9 +254,9 @@ def test_black_ratio_rgb_detects_black_and_color():
 
 def test_oversized_source_frame_is_skipped(worker):
     side = int(MAX_SOURCE_PIXELS ** 0.5) + 100
-    worker._sct.grab.return_value = _make_raw(side, side)
-
-    meta, jpeg = worker._capture_jpeg()
+    sct = _mock_mss(grab_return=_make_raw(side, side))
+    with patch("screenshot.sys.platform", "win32"), patch("screenshot.mss.mss", return_value=sct):
+        meta, jpeg = worker._capture_jpeg()
 
     assert jpeg is None
     assert meta.skipped_reason == "source_too_large"
@@ -229,7 +273,7 @@ def test_pick_monitor_prefers_primary():
 
 
 def test_jpeg_encoding_closes_image(worker):
-    worker._sct.grab.return_value = _make_raw(2800, 2000)
+    sct = _mock_mss(grab_return=_make_raw(2800, 2000))
     closed_sizes = []
     original_close = Image.Image.close
 
@@ -237,7 +281,9 @@ def test_jpeg_encoding_closes_image(worker):
         closed_sizes.append(self.size)
         return original_close(self)
 
-    with patch.object(Image.Image, "close", track_close):
+    with patch("screenshot.sys.platform", "win32"), patch(
+        "screenshot.mss.mss", return_value=sct
+    ), patch.object(Image.Image, "close", track_close):
         meta, jpeg = worker._capture_jpeg()
 
     assert jpeg is not None

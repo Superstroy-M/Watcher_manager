@@ -21,7 +21,7 @@ from diag_log import is_debug_mode, log_event
 from http_client import post
 from memory_guard import check_memory, process_ram_mb, screenshots_allowed
 from monitoring_control import is_monitoring_active
-from server_link import is_online, mark_offline
+from server_link import is_online
 
 if sys.platform == "win32":
     import mss.windows
@@ -60,11 +60,12 @@ class ScreenshotWorker:
     def __init__(self):
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._sct: Optional[mss.mss] = None
         self._cycle = 0
         self._flight_lock = threading.Lock()
         self._last_context_shot_at = 0.0
         self._context_handler = self._on_context_change
+        self._context_lock = threading.Lock()
+        self._context_pending = False
 
     def start(self):
         if not SCREENSHOT_ENABLED:
@@ -72,7 +73,7 @@ class ScreenshotWorker:
             return
         register_context_listener(self._context_handler)
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="ScreenshotWorker")
         self._thread.start()
 
     def stop(self):
@@ -92,7 +93,8 @@ class ScreenshotWorker:
         if not is_online() or not is_monitoring_active() or not screenshots_allowed():
             return
         self._last_context_shot_at = now
-        threading.Thread(target=self._capture_and_send, kwargs={"trigger": "context"}, daemon=True).start()
+        with self._context_lock:
+            self._context_pending = True
 
     def _loop(self):
         try:
@@ -104,31 +106,30 @@ class ScreenshotWorker:
         except Exception:
             pass
 
-        if sys.platform == "win32":
-            self._sct = mss.mss()
+        while self._running:
+            try:
+                check_memory()
+                if not is_online() or not is_monitoring_active():
+                    time.sleep(SCREENSHOT_INTERVAL)
+                    continue
+                if not screenshots_allowed():
+                    time.sleep(SCREENSHOT_INTERVAL)
+                    continue
 
-        try:
-            while self._running:
-                try:
-                    check_memory()
-                    if not is_online() or not is_monitoring_active():
-                        time.sleep(SCREENSHOT_INTERVAL)
-                        continue
-                    if not screenshots_allowed():
-                        time.sleep(SCREENSHOT_INTERVAL)
-                        continue
-                    self._capture_and_send(trigger="interval")
-                except Exception as e:
-                    logger.warning("Screenshot error: %s", e)
-                    log_event("screenshot_error", "screenshot", error=str(e))
-                self._cycle += 1
-                if self._cycle % GC_EVERY_N_CYCLES == 0:
-                    gc.collect()
-                time.sleep(SCREENSHOT_INTERVAL)
-        finally:
-            if self._sct is not None:
-                self._sct.close()
-                self._sct = None
+                trigger = "interval"
+                with self._context_lock:
+                    if self._context_pending:
+                        self._context_pending = False
+                        trigger = "context"
+
+                self._capture_and_send(trigger=trigger)
+            except Exception as e:
+                logger.warning("Screenshot error: %s", e)
+                log_event("screenshot_error", "screenshot", error=str(e))
+            self._cycle += 1
+            if self._cycle % GC_EVERY_N_CYCLES == 0:
+                gc.collect()
+            time.sleep(SCREENSHOT_INTERVAL)
 
     def _capture_and_send(self, trigger: str = "interval"):
         import socket
@@ -143,9 +144,6 @@ class ScreenshotWorker:
 
         jpeg_bytes: Optional[bytes] = None
         try:
-            if not is_online():
-                return
-
             timestamp = datetime.utcnow()
             ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
             hostname = socket.gethostname()
@@ -171,10 +169,8 @@ class ScreenshotWorker:
                         black_ratio=round(meta.black_ratio, 3),
                         capture_ms=round(meta.capture_ms, 1),
                         ram_mb=meta.ram_mb,
+                        trigger=trigger,
                     )
-                return
-
-            if not is_online():
                 return
 
             resp = post(
@@ -209,94 +205,91 @@ class ScreenshotWorker:
                 encode_ms=round(meta.encode_ms, 1),
                 jpeg_bytes=meta.jpeg_bytes,
                 ram_mb=meta.ram_mb,
+                trigger=trigger,
             )
         except Exception as e:
-            mark_offline(str(e))
-            log_event("screenshot_dropped_offline", "screenshot", error=str(e))
+            logger.warning("Screenshot failed (%s): %s", trigger, e)
+            log_event("screenshot_error", "screenshot", error=str(e), trigger=trigger)
         finally:
             jpeg_bytes = None
             self._flight_lock.release()
 
     def _capture_jpeg(self) -> tuple[CaptureMeta, Optional[bytes]]:
         """
-        Buffer lifecycle (encode path, peak buffers never overlap long):
-
-        1. MSS ScreenShot ``raw`` — BGRA in ``raw.raw``; black check uses only that.
-        2. ``raw.rgb`` — one RGB bytes copy (MSS property); ``raw`` deleted immediately after.
-        3. PIL ``Image`` — owns decoded pixels; previous image closed before resize swap.
-        4. ``io.BytesIO`` — scoped to JPEG encode; buffer freed on context exit.
-        5. Returned ``jpeg_bytes`` — caller clears reference in ``_capture_and_send`` finally.
-
-        Skip paths (black / too large) release ``raw`` only; no ``raw.rgb`` or PIL allocation.
+        MSS instance is created and closed in this call (same thread as grab).
         """
-        if self._sct is None:
+        if sys.platform != "win32":
             raise RuntimeError("Screenshot capture is only supported on Windows")
 
-        capture_start = time.perf_counter()
-        monitor = _pick_monitor(self._sct)
-        raw = self._sct.grab(monitor)
+        sct = mss.mss()
         try:
-            source_w, source_h = raw.width, raw.height
-            black_ratio = _black_ratio_bgra(raw.raw, source_w, source_h)
-            capture_ms = (time.perf_counter() - capture_start) * 1000
-            ram_mb = process_ram_mb()
+            capture_start = time.perf_counter()
+            monitor = _pick_monitor(sct)
+            raw = sct.grab(monitor)
+            try:
+                source_w, source_h = raw.width, raw.height
+                black_ratio = _black_ratio_bgra(raw.raw, source_w, source_h)
+                capture_ms = (time.perf_counter() - capture_start) * 1000
+                ram_mb = process_ram_mb()
 
-            meta = CaptureMeta(
-                width=0,
-                height=0,
-                source_width=source_w,
-                source_height=source_h,
-                black_ratio=black_ratio,
-                skipped_black=black_ratio >= BLACK_FRAME_RATIO,
-                skipped_reason="",
-                capture_ms=capture_ms,
-                encode_ms=0.0,
-                jpeg_bytes=0,
-                ram_mb=ram_mb,
-            )
+                meta = CaptureMeta(
+                    width=0,
+                    height=0,
+                    source_width=source_w,
+                    source_height=source_h,
+                    black_ratio=black_ratio,
+                    skipped_black=black_ratio >= BLACK_FRAME_RATIO,
+                    skipped_reason="",
+                    capture_ms=capture_ms,
+                    encode_ms=0.0,
+                    jpeg_bytes=0,
+                    ram_mb=ram_mb,
+                )
 
-            if black_ratio >= BLACK_FRAME_RATIO:
-                meta.skipped_reason = "black_frame"
-                return meta, None
+                if black_ratio >= BLACK_FRAME_RATIO:
+                    meta.skipped_reason = "black_frame"
+                    return meta, None
 
-            if source_w * source_h > MAX_SOURCE_PIXELS:
-                meta.skipped_reason = "source_too_large"
-                return meta, None
+                if source_w * source_h > MAX_SOURCE_PIXELS:
+                    meta.skipped_reason = "source_too_large"
+                    return meta, None
 
-            rgb_bytes = raw.rgb
+                rgb_bytes = raw.rgb
+            finally:
+                del raw
+
+            encode_start = time.perf_counter()
+            img: Optional[Image.Image] = None
+            jpeg_bytes: Optional[bytes] = None
+            try:
+                img = Image.frombytes("RGB", (source_w, source_h), rgb_bytes)
+            finally:
+                del rgb_bytes
+
+            try:
+                out_w, out_h = source_w, source_h
+                if source_w > MAX_CAPTURE_WIDTH:
+                    out_h = max(1, round(source_h * MAX_CAPTURE_WIDTH / source_w))
+                    resized = img.resize((MAX_CAPTURE_WIDTH, out_h), Image.Resampling.BILINEAR)
+                    img.close()
+                    img = resized
+                    out_w, out_h = img.size
+
+                with io.BytesIO() as buf:
+                    img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
+                    jpeg_bytes = buf.getvalue()
+
+                meta.width = out_w
+                meta.height = out_h
+                meta.encode_ms = (time.perf_counter() - encode_start) * 1000
+                meta.jpeg_bytes = len(jpeg_bytes)
+                meta.ram_mb = process_ram_mb()
+                return meta, jpeg_bytes
+            finally:
+                if img is not None:
+                    img.close()
         finally:
-            del raw
-
-        encode_start = time.perf_counter()
-        img: Optional[Image.Image] = None
-        jpeg_bytes: Optional[bytes] = None
-        try:
-            img = Image.frombytes("RGB", (source_w, source_h), rgb_bytes)
-        finally:
-            del rgb_bytes
-
-        try:
-            out_w, out_h = source_w, source_h
-            if source_w > MAX_CAPTURE_WIDTH:
-                out_h = max(1, round(source_h * MAX_CAPTURE_WIDTH / source_w))
-                resized = img.resize((MAX_CAPTURE_WIDTH, out_h), Image.Resampling.BILINEAR)
-                img.close()
-                img = resized
-                out_w, out_h = img.size
-
-            with io.BytesIO() as buf:
-                img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
-                jpeg_bytes = buf.getvalue()
-
-            meta.width = out_w
-            meta.height = out_h
-            meta.encode_ms = (time.perf_counter() - encode_start) * 1000
-            meta.jpeg_bytes = len(jpeg_bytes)
-            meta.ram_mb = process_ram_mb()
-            return meta, jpeg_bytes
-        finally:
-            if img is not None:
-                img.close()
+            sct.close()
 
 
 def _pick_monitor(sct: mss.mss) -> dict:

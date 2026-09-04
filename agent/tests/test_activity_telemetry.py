@@ -228,25 +228,23 @@ def test_context_screenshot_respects_15s_debounce():
 
     with patch("screenshot.is_online", return_value=True), patch(
         "screenshot.is_monitoring_active", return_value=True
-    ), patch("screenshot.screenshots_allowed", return_value=True), patch(
-        "screenshot.threading.Thread"
-    ) as thread_mock:
+    ), patch("screenshot.screenshots_allowed", return_value=True):
         worker._on_context_change("chrome.exe", "Tab")
-        thread_mock.assert_not_called()
+
+    assert worker._context_pending is False
 
 
-def test_context_screenshot_fires_after_debounce():
+def test_context_screenshot_queues_capture_for_worker_loop():
     worker = ScreenshotWorker()
     worker._running = True
     worker._last_context_shot_at = 0.0
 
     with patch("screenshot.is_online", return_value=True), patch(
         "screenshot.is_monitoring_active", return_value=True
-    ), patch("screenshot.screenshots_allowed", return_value=True), patch(
-        "screenshot.threading.Thread"
-    ) as thread_mock:
+    ), patch("screenshot.screenshots_allowed", return_value=True):
         worker._on_context_change("chrome.exe", "Tab")
-        thread_mock.assert_called_once()
+
+    assert worker._context_pending is True
 
 
 def test_input_does_not_trigger_screenshot():
