@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
+Write-Host "== SyncLayer: verify config.py =="
+python verify_build_url.py config
+
 Write-Host "== SyncLayer: build SyncLayerAgent.exe =="
 
 python -m pip install --upgrade pip
@@ -34,6 +37,9 @@ if (!(Test-Path "dist/SyncLayerAgent.exe")) {
     throw "SyncLayerAgent.exe was not built"
 }
 
+Write-Host "== SyncLayer: verify SyncLayerAgent.exe URL =="
+python verify_build_url.py agent-exe --path dist/SyncLayerAgent.exe
+
 Write-Host "== SyncLayer: build installer =="
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (!(Test-Path $iscc)) {
@@ -45,5 +51,8 @@ if (!(Test-Path $iscc)) {
 if (!(Test-Path "dist\SyncLayerSetup.exe")) {
     throw "SyncLayerSetup.exe was not built"
 }
+
+Write-Host "== SyncLayer: verify installer artifact =="
+python verify_build_url.py installer --path dist/SyncLayerSetup.exe
 
 Write-Host "Done: dist\SyncLayerSetup.exe"

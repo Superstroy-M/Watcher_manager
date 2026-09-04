@@ -10,6 +10,7 @@ on:
       - "agent/config.py"
       - "agent/requirements.txt"
       - "agent/build_setup.ps1"
+      - "agent/verify_build_url.py"
       - "agent/install_common.ps1"
       - "agent/install_finalize.ps1"
       - "agent/install_verify.ps1"
@@ -34,13 +35,35 @@ jobs:
         shell: powershell
         run: choco install innosetup --no-progress -y
 
+      - name: Verify config.py before build
+        shell: powershell
+        working-directory: agent
+        run: python verify_build_url.py config
+
       - name: Build SyncLayerSetup.exe
         shell: powershell
         working-directory: agent
         run: .\build_setup.ps1
+
+      - name: Verify SyncLayerAgent.exe URL in binary
+        shell: powershell
+        working-directory: agent
+        run: python verify_build_url.py agent-exe --path dist/SyncLayerAgent.exe
+
+      - name: Verify installer artifact
+        shell: powershell
+        working-directory: agent
+        run: |
+          python verify_build_url.py installer --path dist/SyncLayerSetup.exe
+          if (-not (Test-Path "dist/SyncLayerSetup.exe")) { throw "SyncLayerSetup.exe missing" }
+          $extra = Get-ChildItem dist -File | Where-Object { $_.Name -ne "SyncLayerSetup.exe" }
+          if ($extra) {
+            Write-Host "dist/ also contains (not uploaded): $($extra.Name -join ', ')"
+          }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: SyncLayerSetup
           path: agent/dist/SyncLayerSetup.exe
+          if-no-files-found: error
