@@ -128,9 +128,11 @@ function Register-SyncLayerScheduledTask {
     }
 
     $command = "`"$AgentPath`""
-    & schtasks.exe /Create /F /TN $Script:TaskName /TR $command /SC ONLOGON /RL HIGHEST /IT | Out-Null
+    $runAs = if ($env:USERDOMAIN) { "$($env:USERDOMAIN)\$($env:USERNAME)" } else { $env:USERNAME }
+    $agentDir = Split-Path -Parent $AgentPath
+    & schtasks.exe /Create /F /TN $Script:TaskName /TR $command /SC ONLOGON /RL HIGHEST /RU $runAs /IT /NP | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create scheduled task '$($Script:TaskName)'"
+        throw "Failed to create scheduled task '$($Script:TaskName)' for user '$runAs'"
     }
 }
 
@@ -153,8 +155,28 @@ function Start-SyncLayerAgentOnce {
         Stop-SyncLayerProcesses
     }
 
-    Start-Process -FilePath $AgentPath -WindowStyle Hidden
-    Start-Sleep -Seconds 3
+    $agentDir = Split-Path -Parent $AgentPath
+    $proc = Start-Process `
+        -FilePath $AgentPath `
+        -WorkingDirectory $agentDir `
+        -WindowStyle Hidden `
+        -PassThru
+    Start-Sleep -Seconds 5
+
+    if ($proc.HasExited) {
+        $logFile = Join-Path $agentDir 'agent.log'
+        $tail = @()
+        if (Test-Path $logFile) {
+            $tail = @(Get-Content $logFile -Tail 20 -Encoding UTF8 -ErrorAction SilentlyContinue)
+        }
+        $hint = if ($tail.Count) { ($tail -join ' | ') } else { '(agent.log missing — exe may be blocked by antivirus)' }
+        throw "SyncLayerAgent exited immediately (code $($proc.ExitCode)). Recent log: $hint"
+    }
+
+    $running = Get-SyncLayerProcessCount
+    if ($running -lt 1) {
+        throw 'SyncLayerAgent process not found after start (may have been killed by antivirus)'
+    }
 }
 
 function Test-SyncLayerScheduledTaskExists {
@@ -284,8 +306,21 @@ function Get-SyncLayerScheduledTaskState {
     return 'Present'
 }
 
+function Get-SyncLayerAgentDir {
+    $candidates = @(
+        (Join-Path $env:ProgramData 'SyncLayer'),
+        (Join-Path ${env:ProgramFiles} 'SyncLayer')
+    )
+    foreach ($dir in $candidates) {
+        if (Test-Path (Join-Path $dir 'SyncLayerAgent.exe')) {
+            return $dir
+        }
+    }
+    return $candidates[0]
+}
+
 function Get-SyncLayerAgentDiagnostics {
-    $agentDir = Join-Path ${env:ProgramFiles} 'SyncLayer'
+    $agentDir = Get-SyncLayerAgentDir
     $logFile = Join-Path $agentDir 'agent.log'
     $traceFile = Join-Path $agentDir 'activity_trace.jsonl'
     $procs = @(Get-Process -Name 'SyncLayerAgent' -ErrorAction SilentlyContinue)

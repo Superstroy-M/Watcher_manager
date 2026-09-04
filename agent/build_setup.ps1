@@ -29,6 +29,14 @@ python -m PyInstaller `
   --noconsole `
   --onefile `
   --name SyncLayerAgent `
+  --hidden-import pywintypes `
+  --hidden-import win32api `
+  --hidden-import win32con `
+  --hidden-import win32gui `
+  --hidden-import win32process `
+  --hidden-import win32timezone `
+  --hidden-import pynput.keyboard._win32 `
+  --hidden-import pynput.mouse._win32 `
   @iconArgs `
   app_main.py `
   --distpath dist

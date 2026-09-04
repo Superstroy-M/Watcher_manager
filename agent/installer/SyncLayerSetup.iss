@@ -24,10 +24,11 @@ Source: "..\dist\SyncLayerAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\install_common.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\install_finalize.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\install_verify.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\install_repair.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_finalize.ps1"" -AgentPath ""{app}\SyncLayerAgent.exe"" -AgentDir ""{app}"""; Flags: runhidden waituntilterminated
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_verify.ps1"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_finalize.ps1"" -AgentPath ""{app}\SyncLayerAgent.exe"" -AgentDir ""{app}"""; Flags: runhidden waituntilterminated abortiferror
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install_verify.ps1"""; Flags: runhidden waituntilterminated abortiferror
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command "". '{app}\install_common.ps1'; Remove-LegacySyncLayerInstall -AgentDir '{app}' -StopProcesses"""; Flags: runhidden waituntilterminated

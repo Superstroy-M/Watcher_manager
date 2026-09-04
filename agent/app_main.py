@@ -4,24 +4,50 @@
 """
 import os
 import sys
-import threading
-import time
-import logging
+from pathlib import Path
+
+
+def _bootstrap_log(message: str) -> None:
+    """Пишет в agent.log до полной инициализации logging (если exe падает на import)."""
+    try:
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).resolve().parent
+        else:
+            base = Path(__file__).resolve().parent
+        base.mkdir(parents=True, exist_ok=True)
+        with (base / "agent.log").open("a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
+    except Exception:
+        pass
+
+
+_bootstrap_log("bootstrap: SyncLayerAgent process started")
 
 # PyInstaller: ресурсы рядом с exe
 if getattr(sys, "frozen", False):
     os.chdir(os.path.dirname(sys.executable))
+    _bootstrap_log(f"bootstrap: cwd={os.getcwd()}")
 
-from window_tracker import WindowTracker
-from sender import EventSender
-from screenshot import ScreenshotWorker
-from process_monitor import ProcessMonitor
-from network_monitor import NetworkMonitor
-from print_monitor import PrintMonitor
-from diag_log import get_agent_dir, is_debug_mode, log_event, log_exception, log_memory_sample
-from config import AGENT_VERSION, SERVER_URL
-from input_counter import get_input_counter
-from memory_guard import check_memory
+import threading
+import time
+import logging
+
+try:
+    from window_tracker import WindowTracker
+    from sender import EventSender
+    from screenshot import ScreenshotWorker
+    from process_monitor import ProcessMonitor
+    from network_monitor import NetworkMonitor
+    from print_monitor import PrintMonitor
+    from diag_log import get_agent_dir, is_debug_mode, log_event, log_exception, log_memory_sample
+    from config import AGENT_VERSION, SERVER_URL
+    from input_counter import get_input_counter
+    from memory_guard import check_memory
+except Exception as exc:
+    _bootstrap_log(f"bootstrap: import failed: {exc!r}")
+    raise
+
+_bootstrap_log("bootstrap: imports ok")
 
 SHOW_TRAY = os.environ.get("SYNC_SHOW_TRAY", "0").strip() == "1"
 LOG_FILE = str(get_agent_dir() / "agent.log")
