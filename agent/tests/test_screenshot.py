@@ -8,10 +8,10 @@ from PIL import Image
 from screenshot import (
     BLACK_FRAME_RATIO,
     CaptureMeta,
+    MAX_CAPTURE_WIDTH,
     ScreenshotWorker,
-    _black_ratio,
+    _black_ratio_bgra,
     _black_ratio_rgb,
-    _imagegrab_fallback,
 )
 
 
@@ -20,9 +20,21 @@ def _rgb_bytes(width: int, height: int, color=(120, 140, 160)) -> bytes:
     return bytes([r, g, b] * (width * height))
 
 
+def _bgra_bytes(width: int, height: int, color=(120, 140, 160, 255)) -> bytearray:
+    r, g, b, a = color
+    buf = bytearray(width * height * 4)
+    for i in range(0, len(buf), 4):
+        buf[i] = b
+        buf[i + 1] = g
+        buf[i + 2] = r
+        buf[i + 3] = a
+    return buf
+
+
 def _make_raw(width: int, height: int, color=(120, 140, 160)):
+    bgra = _bgra_bytes(width, height, (*color, 255))
     rgb = _rgb_bytes(width, height, color)
-    return SimpleNamespace(width=width, height=height, rgb=rgb)
+    return SimpleNamespace(width=width, height=height, raw=bgra, rgb=rgb)
 
 
 @pytest.fixture
@@ -43,37 +55,31 @@ def test_captureblt_disabled_on_windows():
 def test_single_grab_uses_virtual_desktop(worker):
     worker._sct.grab.return_value = _make_raw(1920, 1080)
 
-    img, meta = worker._capture_image()
+    meta, jpeg = worker._capture_jpeg()
 
     worker._sct.grab.assert_called_once_with(worker._sct.monitors[0])
-    assert img.size == (1920, 1080)
-    assert meta.fallback is False
-    assert meta.black_ratio < BLACK_FRAME_RATIO
-    img.close()
+    assert jpeg is not None
+    assert meta.skipped_black is False
+    assert meta.width <= MAX_CAPTURE_WIDTH
 
 
-def test_no_imagegrab_on_normal_frame(worker):
-    worker._sct.grab.return_value = _make_raw(2560, 1440)
-
-    with patch("screenshot._imagegrab_fallback") as fallback:
-        img, meta = worker._capture_image()
-
-    fallback.assert_not_called()
-    assert meta.fallback is False
-    img.close()
-
-
-def test_imagegrab_only_for_almost_black_frame(worker):
+def test_black_frame_is_skipped_without_rgb_conversion(worker):
     worker._sct.grab.return_value = _make_raw(1920, 1080, color=(0, 0, 0))
-    fallback_img = Image.new("RGB", (1920, 1080), color=(200, 210, 220))
 
-    with patch("screenshot._imagegrab_fallback", return_value=fallback_img) as fallback:
-        img, meta = worker._capture_image()
+    meta, jpeg = worker._capture_jpeg()
 
-    fallback.assert_called_once()
-    assert meta.fallback is True
-    assert img is fallback_img
-    img.close()
+    assert jpeg is None
+    assert meta.skipped_black is True
+
+
+def test_large_frame_is_downscaled(worker):
+    worker._sct.grab.return_value = _make_raw(3840, 2160)
+
+    meta, jpeg = worker._capture_jpeg()
+
+    assert jpeg is not None
+    assert meta.width == MAX_CAPTURE_WIDTH
+    assert meta.height < 2160
 
 
 def test_mss_instance_reused_not_recreated_each_cycle():
@@ -107,23 +113,36 @@ def test_mss_instance_reused_not_recreated_each_cycle():
 
 
 def test_capture_and_send_logs_metrics(worker):
-    img = Image.new("RGB", (800, 600), color=(10, 20, 30))
-    meta = CaptureMeta(800, 600, 0.1, False, 12.5)
+    meta = CaptureMeta(
+        width=1280,
+        height=720,
+        source_width=3840,
+        source_height=2160,
+        black_ratio=0.1,
+        skipped_black=False,
+        capture_ms=12.5,
+        encode_ms=8.0,
+        jpeg_bytes=12345,
+        ram_mb=90.0,
+    )
 
-    with patch.object(worker, "_capture_image", return_value=(img, meta)), patch(
-        "screenshot.requests.post", return_value=SimpleNamespace(status_code=200, raise_for_status=lambda: None)
+    with patch.object(worker, "_capture_jpeg", return_value=(meta, b"jpegdata")), patch(
+        "screenshot.requests.post",
+        return_value=SimpleNamespace(status_code=200, raise_for_status=lambda: None),
     ), patch("screenshot.logger") as log_mock:
         worker._capture_and_send()
 
-    log_mock.info.assert_called_once()
     message = log_mock.info.call_args[0][0]
     assert "capture_ms=" in message
     assert "encode_ms=" in message
-    assert "width=" in message
-    assert "height=" in message
-    assert "black_ratio=" in message
-    assert "fallback=" in message
+    assert "source=" in message
     assert "jpeg_bytes=" in message
+    assert "ram_mb=" in message
+
+
+def test_black_ratio_bgra_detects_black_and_color():
+    assert _black_ratio_bgra(_bgra_bytes(100, 100, (0, 0, 0, 255)), 100, 100) >= BLACK_FRAME_RATIO
+    assert _black_ratio_bgra(_bgra_bytes(100, 100, (200, 210, 220, 255)), 100, 100) < BLACK_FRAME_RATIO
 
 
 def test_black_ratio_rgb_detects_black_and_color():
@@ -131,34 +150,15 @@ def test_black_ratio_rgb_detects_black_and_color():
     assert _black_ratio_rgb(_rgb_bytes(100, 100, (200, 210, 220)), 100, 100) < BLACK_FRAME_RATIO
 
 
-def test_black_ratio_on_image():
-    black = Image.new("RGB", (100, 100), color=(0, 0, 0))
-    color = Image.new("RGB", (100, 100), color=(200, 210, 220))
-    try:
-        assert _black_ratio(black) >= BLACK_FRAME_RATIO
-        assert _black_ratio(color) < BLACK_FRAME_RATIO
-    finally:
-        black.close()
-        color.close()
-
-
-def test_imagegrab_fallback_closes_non_rgb():
-    grabbed = Image.new("RGBA", (10, 10), color=(255, 0, 0, 255))
-    with patch("PIL.ImageGrab.grab", return_value=grabbed):
-        img = _imagegrab_fallback()
-    assert img is not None
-    assert img.mode == "RGB"
-    img.close()
-
-
 def test_jpeg_encoding_closes_image(worker):
-    img = MagicMock()
-    img.save = Image.new("RGB", (640, 480), color=(30, 40, 50)).save
-    meta = CaptureMeta(640, 480, 0.0, False, 1.0)
+    worker._sct.grab.return_value = _make_raw(3840, 2160)
 
-    with patch.object(worker, "_capture_image", return_value=(img, meta)), patch(
-        "screenshot.requests.post", return_value=SimpleNamespace(status_code=200, raise_for_status=lambda: None)
-    ):
-        worker._capture_and_send()
-
-    img.close.assert_called_once()
+    with patch("screenshot.Image") as image_mock:
+        img = MagicMock()
+        resized = MagicMock()
+        resized.size = (1280, 720)
+        image_mock.frombytes.return_value = img
+        img.resize.return_value = resized
+        worker._capture_jpeg()
+        img.close.assert_called_once()
+        resized.close.assert_called_once()

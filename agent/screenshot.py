@@ -1,6 +1,7 @@
 """
 Захват скриншотов экрана и отправка на сервер.
 """
+import gc
 import io
 import os
 import sys
@@ -26,19 +27,28 @@ if sys.platform == "win32":
 logger = logging.getLogger("screenshot")
 
 HEADERS = {"X-API-Key": API_KEY}
-SCREENSHOT_INTERVAL = int(os.environ.get("SCREENSHOT_INTERVAL", "30"))  # секунд
-JPEG_QUALITY = 50   # 40-60 оптимально: хорошее качество, малый размер
+SCREENSHOT_INTERVAL = int(os.environ.get("SCREENSHOT_INTERVAL", "30"))
+SCREENSHOT_ENABLED = os.environ.get("SCREENSHOT_ENABLED", "1").strip() != "0"
+JPEG_QUALITY = int(os.environ.get("SCREENSHOT_JPEG_QUALITY", "50"))
+MAX_CAPTURE_WIDTH = int(os.environ.get("SCREENSHOT_MAX_WIDTH", "1280"))
 OFFLINE_DIR = Path(__file__).parent / "screenshots_offline"
 BLACK_FRAME_RATIO = 0.98
+OFFLINE_FLUSH_LIMIT = 3
+GC_EVERY_N_CYCLES = 5
 
 
 @dataclass
 class CaptureMeta:
     width: int
     height: int
+    source_width: int
+    source_height: int
     black_ratio: float
-    fallback: bool
+    skipped_black: bool
     capture_ms: float
+    encode_ms: float
+    jpeg_bytes: int
+    ram_mb: float
 
 
 class ScreenshotWorker:
@@ -46,8 +56,12 @@ class ScreenshotWorker:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._sct: Optional[mss.mss] = None
+        self._cycle = 0
 
     def start(self):
+        if not SCREENSHOT_ENABLED:
+            logger.info("Screenshot capture disabled (SCREENSHOT_ENABLED=0)")
+            return
         self._running = True
         OFFLINE_DIR.mkdir(exist_ok=True)
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -77,7 +91,10 @@ class ScreenshotWorker:
                     self._flush_offline()
                     self._capture_and_send()
                 except Exception as e:
-                    logger.warning(f"Screenshot error: {e}")
+                    logger.warning("Screenshot error: %s", e)
+                self._cycle += 1
+                if self._cycle % GC_EVERY_N_CYCLES == 0:
+                    gc.collect()
                 time.sleep(SCREENSHOT_INTERVAL)
         finally:
             if self._sct is not None:
@@ -91,33 +108,17 @@ class ScreenshotWorker:
         ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
         hostname = socket.gethostname()
 
-        img: Optional[Image.Image] = None
-        jpeg_bytes: Optional[bytes] = None
-        encode_ms = 0.0
-        meta = CaptureMeta(0, 0, 1.0, False, 0.0)
-
-        try:
-            img, meta = self._capture_image()
-            encode_start = time.perf_counter()
-            with io.BytesIO() as buf:
-                img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-                jpeg_bytes = buf.getvalue()
-            encode_ms = (time.perf_counter() - encode_start) * 1000
-        finally:
-            if img is not None:
-                img.close()
-
-        logger.info(
-            "screenshot capture_ms=%.1f encode_ms=%.1f width=%d height=%d "
-            "black_ratio=%.3f fallback=%s jpeg_bytes=%d",
-            meta.capture_ms,
-            encode_ms,
-            meta.width,
-            meta.height,
-            meta.black_ratio,
-            meta.fallback,
-            len(jpeg_bytes or b""),
-        )
+        meta, jpeg_bytes = self._capture_jpeg()
+        if jpeg_bytes is None:
+            logger.info(
+                "screenshot skipped capture_ms=%.1f source=%dx%d black_ratio=%.3f ram_mb=%.1f",
+                meta.capture_ms,
+                meta.source_width,
+                meta.source_height,
+                meta.black_ratio,
+                meta.ram_mb,
+            )
+            return
 
         try:
             resp = requests.post(
@@ -130,50 +131,91 @@ class ScreenshotWorker:
             resp.raise_for_status()
         except Exception:
             offline_path = OFFLINE_DIR / f"{hostname}_{ts_str}.jpg"
-            offline_path.write_bytes(jpeg_bytes or b"")
+            offline_path.write_bytes(jpeg_bytes)
             raise
         finally:
             jpeg_bytes = None
 
-    def _capture_image(self) -> tuple[Image.Image, CaptureMeta]:
+        logger.info(
+            "screenshot capture_ms=%.1f encode_ms=%.1f source=%dx%d out=%dx%d "
+            "black_ratio=%.3f skipped_black=%s jpeg_bytes=%d ram_mb=%.1f",
+            meta.capture_ms,
+            meta.encode_ms,
+            meta.source_width,
+            meta.source_height,
+            meta.width,
+            meta.height,
+            meta.black_ratio,
+            meta.skipped_black,
+            meta.jpeg_bytes,
+            meta.ram_mb,
+        )
+
+    def _capture_jpeg(self) -> tuple[CaptureMeta, Optional[bytes]]:
         if self._sct is None:
             raise RuntimeError("Screenshot capture is only supported on Windows")
 
         capture_start = time.perf_counter()
-        monitor = self._sct.monitors[0]
-        raw = self._sct.grab(monitor)
-        width, height = raw.width, raw.height
-        rgb_bytes = raw.rgb
-        del raw
-
-        black_ratio = _black_ratio_rgb(rgb_bytes, width, height)
+        raw = self._sct.grab(self._sct.monitors[0])
+        source_w, source_h = raw.width, raw.height
+        black_ratio = _black_ratio_bgra(raw.raw, source_w, source_h)
         capture_ms = (time.perf_counter() - capture_start) * 1000
-        meta = CaptureMeta(width, height, black_ratio, False, capture_ms)
+        ram_mb = _process_ram_mb()
 
-        if black_ratio < BLACK_FRAME_RATIO:
-            img = Image.frombytes("RGB", (width, height), rgb_bytes)
-            del rgb_bytes
-            return img, meta
+        meta = CaptureMeta(
+            width=0,
+            height=0,
+            source_width=source_w,
+            source_height=source_h,
+            black_ratio=black_ratio,
+            skipped_black=black_ratio >= BLACK_FRAME_RATIO,
+            capture_ms=capture_ms,
+            encode_ms=0.0,
+            jpeg_bytes=0,
+            ram_mb=ram_mb,
+        )
 
-        del rgb_bytes
-        meta.fallback = True
-        fallback_img = _imagegrab_fallback()
-        if fallback_img is not None:
-            meta.width, meta.height = fallback_img.size
-            meta.black_ratio = _black_ratio(fallback_img)
-            return fallback_img, meta
+        if black_ratio >= BLACK_FRAME_RATIO:
+            del raw
+            return meta, None
 
-        return Image.new("RGB", (width, height), color=(0, 0, 0)), meta
+        encode_start = time.perf_counter()
+        img: Optional[Image.Image] = None
+        jpeg_bytes: Optional[bytes] = None
+        try:
+            img = Image.frombytes("RGB", (source_w, source_h), raw.rgb)
+            del raw
+
+            out_w, out_h = source_w, source_h
+            if source_w > MAX_CAPTURE_WIDTH:
+                out_h = max(1, round(source_h * MAX_CAPTURE_WIDTH / source_w))
+                resized = img.resize((MAX_CAPTURE_WIDTH, out_h), Image.Resampling.LANCZOS)
+                img.close()
+                img = resized
+                out_w, out_h = img.size
+
+            with io.BytesIO() as buf:
+                img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
+                jpeg_bytes = buf.getvalue()
+
+            meta.width = out_w
+            meta.height = out_h
+            meta.encode_ms = (time.perf_counter() - encode_start) * 1000
+            meta.jpeg_bytes = len(jpeg_bytes)
+            meta.ram_mb = _process_ram_mb()
+            return meta, jpeg_bytes
+        finally:
+            if img is not None:
+                img.close()
 
     def _flush_offline(self):
-        """Отправляем скриншоты накопленные офлайн."""
         import socket
 
         hostname = socket.gethostname()
         files = sorted(OFFLINE_DIR.glob("*.jpg"))
         if not files:
             return
-        for f in files:
+        for f in files[:OFFLINE_FLUSH_LIMIT]:
             try:
                 ts_str = f.stem.replace(f"{hostname}_", "")
                 ts = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
@@ -191,47 +233,44 @@ class ScreenshotWorker:
                 break
 
 
-def _imagegrab_fallback() -> Optional[Image.Image]:
-    """Редкий fallback только для почти полностью чёрного mss-кадра."""
+def _process_ram_mb() -> float:
     try:
-        from PIL import ImageGrab
+        import psutil
 
-        grabbed = ImageGrab.grab(all_screens=True)
-        try:
-            if grabbed.mode != "RGB":
-                img = grabbed.convert("RGB")
-                grabbed.close()
-                grabbed = img
-            if _is_mostly_black(grabbed):
-                grabbed.close()
-                return None
-            return grabbed
-        except Exception:
-            grabbed.close()
-            raise
+        return round(psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024), 1)
     except Exception:
-        return None
+        return 0.0
 
 
-def _is_mostly_black(img: Image.Image, threshold: int = 8, min_dark_ratio: float = BLACK_FRAME_RATIO) -> bool:
-    return _black_ratio(img, threshold=threshold) >= min_dark_ratio
+def _black_ratio_bgra(
+    bgra,
+    width: int,
+    height: int,
+    threshold: int = 8,
+    sample_w: int = 160,
+    sample_h: int = 90,
+) -> float:
+    if width <= 0 or height <= 0 or not bgra:
+        return 1.0
 
+    step_x = max(1, width // sample_w)
+    step_y = max(1, height // sample_h)
+    dark = 0
+    total = 0
+    row_stride = width * 4
 
-def _black_ratio(img: Image.Image, threshold: int = 8) -> float:
-    sample = img.resize((160, 90))
-    if sample.mode != "RGB":
-        sample = sample.convert("RGB")
-    try:
-        pixels = sample.getdata()
-        total = len(pixels)
-        if total == 0:
-            return 1.0
-        dark = sum(
-            1 for r, g, b in pixels if r <= threshold and g <= threshold and b <= threshold
-        )
-        return dark / total
-    finally:
-        sample.close()
+    for y in range(0, height, step_y):
+        row_start = y * row_stride
+        for x in range(0, width, step_x):
+            i = row_start + x * 4
+            b = bgra[i]
+            g = bgra[i + 1]
+            r = bgra[i + 2]
+            if r <= threshold and g <= threshold and b <= threshold:
+                dark += 1
+            total += 1
+
+    return dark / total if total else 1.0
 
 
 def _black_ratio_rgb(
